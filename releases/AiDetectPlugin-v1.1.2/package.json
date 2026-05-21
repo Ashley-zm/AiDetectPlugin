@@ -1,0 +1,27 @@
+{
+  "name": "AiDetectPlugin",
+  "id": "AiDetectPlugin",
+  "version": "1.1.2",
+  "description": "Minimal uni-app Android native plugin with DetectActivity launch verification.",
+  "_dp_type": "nativeplugin",
+  "_dp_nativeplugin": {
+    "android": {
+      "plugins": [
+        {
+          "type": "module",
+          "name": "AiDetectPlugin",
+          "class": "com.example.aidetect.AiDetectPlugin"
+        }
+      ],
+      "integrateType": "aar",
+      "minSdkVersion": "21",
+      "compileOptions": {
+        "sourceCompatibility": "1.8",
+        "targetCompatibility": "1.8"
+      },
+      "dependencies": [],
+      "permissions": [],
+      "abis": []
+    }
+  }
+}

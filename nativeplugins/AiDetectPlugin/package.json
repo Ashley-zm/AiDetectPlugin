@@ -1,0 +1,38 @@
+{
+  "name": "AiDetectPlugin",
+  "id": "AiDetectPlugin",
+  "version": "1.2.4",
+  "description": "uni-app Android native plugin with CameraX preview verification.",
+  "_dp_type": "nativeplugin",
+  "_dp_nativeplugin": {
+    "android": {
+      "plugins": [
+        {
+          "type": "module",
+          "name": "AiDetectPlugin",
+          "class": "com.example.aidetect.AiDetectPlugin"
+        }
+      ],
+      "integrateType": "aar",
+      "minSdkVersion": "23",
+      "compileOptions": {
+        "sourceCompatibility": "1.8",
+        "targetCompatibility": "1.8"
+      },
+      "dependencies": [
+        "androidx.annotation:annotation:1.8.1",
+        "androidx.camera:camera-core:1.5.3",
+        "androidx.camera:camera-camera2:1.5.3",
+        "androidx.camera:camera-lifecycle:1.5.3",
+        "androidx.camera:camera-view:1.5.3",
+        "androidx.lifecycle:lifecycle-common:2.8.7",
+        "androidx.lifecycle:lifecycle-runtime:2.8.7",
+        "com.google.guava:guava:33.3.1-android"
+      ],
+      "permissions": [
+        "<uses-permission android:name=\"android.permission.CAMERA\" />"
+      ],
+      "abis": []
+    }
+  }
+}

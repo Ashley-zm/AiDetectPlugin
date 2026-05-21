@@ -1,0 +1,32 @@
+plugins {
+    id 'java-library'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+
+def androidSdkDir = localProperties.getProperty('sdk.dir') ?: System.getenv('ANDROID_HOME') ?: System.getenv('ANDROID_SDK_ROOT')
+if (androidSdkDir != null) {
+    def platformsDir = file("${androidSdkDir}/platforms")
+    def androidJar = null
+    if (platformsDir.exists()) {
+        androidJar = platformsDir.listFiles()
+                ?.findAll { it.isDirectory() && file("${it.absolutePath}/android.jar").exists() }
+                ?.sort { a, b -> b.name <=> a.name }
+                ?.collect { file("${it.absolutePath}/android.jar") }
+                ?.find()
+    }
+    dependencies {
+        if (androidJar != null) {
+            compileOnly files(androidJar)
+        }
+    }
+}
