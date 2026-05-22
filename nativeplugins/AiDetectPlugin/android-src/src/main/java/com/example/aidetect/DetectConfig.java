@@ -11,40 +11,77 @@ import io.dcloud.feature.uniapp.bridge.UniJSCallback;
 public final class DetectConfig {
 
     private static final String TAG = "AiDetectPlugin";
-    private static final String DEFAULT_MODEL_TYPE = "unknown";
-    private static final String DEFAULT_ENGINE = "none";
-    private static final String DEFAULT_MODEL_NAME = "未选择模型";
+    private static final String DEFAULT_MODEL_TYPE = "detection";
+    private static final String DEFAULT_ENGINE = "mock";
+    private static final String DEFAULT_MODEL_NAME = "Mock YOLO";
+    private static final String DEFAULT_MODEL_PATH = "";
+    private static final String DEFAULT_LABEL_PATH = "";
     private static final double DEFAULT_THRESHOLD = 0.5D;
-    private static final int DEFAULT_DETECT_INTERVAL = 500;
+    private static final double DEFAULT_IOU_THRESHOLD = 0.45D;
     private static final int DEFAULT_INPUT_SIZE = 320;
+    private static final int DEFAULT_DETECT_INTERVAL = 500;
+    private static final boolean DEFAULT_USE_GPU = false;
 
-    private static String modelType = DEFAULT_MODEL_TYPE;
-    private static String engine = DEFAULT_ENGINE;
-    private static String modelName = DEFAULT_MODEL_NAME;
-    private static double threshold = DEFAULT_THRESHOLD;
-    private static int detectInterval = DEFAULT_DETECT_INTERVAL;
-    private static int inputSize = DEFAULT_INPUT_SIZE;
+    private static DetectConfig current = defaults();
     private static UniJSCallback callback;
 
-    private DetectConfig() {
+    public final String modelType;
+    public final String engine;
+    public final String modelName;
+    public final String modelPath;
+    public final String labelPath;
+    public final double threshold;
+    public final double iouThreshold;
+    public final int inputSize;
+    public final int detectInterval;
+    public final boolean useGpu;
+
+    private DetectConfig(
+            String modelType,
+            String engine,
+            String modelName,
+            String modelPath,
+            String labelPath,
+            double threshold,
+            double iouThreshold,
+            int inputSize,
+            int detectInterval,
+            boolean useGpu
+    ) {
+        this.modelType = modelType;
+        this.engine = engine;
+        this.modelName = modelName;
+        this.modelPath = modelPath;
+        this.labelPath = labelPath;
+        this.threshold = threshold;
+        this.iouThreshold = iouThreshold;
+        this.inputSize = inputSize;
+        this.detectInterval = detectInterval;
+        this.useGpu = useGpu;
     }
 
     public static synchronized void save(JSONObject options) {
         if (options == null) {
-            reset();
+            current = defaults();
             return;
         }
 
-        modelType = getString(options, "modelType", DEFAULT_MODEL_TYPE);
-        engine = getString(options, "engine", DEFAULT_ENGINE);
-        modelName = getString(options, "modelName", DEFAULT_MODEL_NAME);
-        threshold = getDouble(options, "threshold", DEFAULT_THRESHOLD);
-        detectInterval = getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL);
-        inputSize = getInt(options, "inputSize", DEFAULT_INPUT_SIZE);
+        current = new DetectConfig(
+                getString(options, "modelType", DEFAULT_MODEL_TYPE),
+                getString(options, "engine", DEFAULT_ENGINE),
+                getString(options, "modelName", DEFAULT_MODEL_NAME),
+                getString(options, "modelPath", DEFAULT_MODEL_PATH),
+                getString(options, "labelPath", DEFAULT_LABEL_PATH),
+                getDouble(options, "threshold", DEFAULT_THRESHOLD),
+                getDouble(options, "iouThreshold", DEFAULT_IOU_THRESHOLD),
+                getInt(options, "inputSize", DEFAULT_INPUT_SIZE),
+                getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL),
+                getBoolean(options, "useGpu", DEFAULT_USE_GPU)
+        );
     }
 
-    public static synchronized Snapshot snapshot() {
-        return new Snapshot(modelType, engine, modelName, threshold, detectInterval, inputSize);
+    public static synchronized DetectConfig snapshot() {
+        return current;
     }
 
     public static synchronized void setCallback(UniJSCallback uniCallback) {
@@ -73,13 +110,19 @@ public final class DetectConfig {
         invokeCallback(currentCallback, result, true);
     }
 
-    private static void reset() {
-        modelType = DEFAULT_MODEL_TYPE;
-        engine = DEFAULT_ENGINE;
-        modelName = DEFAULT_MODEL_NAME;
-        threshold = DEFAULT_THRESHOLD;
-        detectInterval = DEFAULT_DETECT_INTERVAL;
-        inputSize = DEFAULT_INPUT_SIZE;
+    private static DetectConfig defaults() {
+        return new DetectConfig(
+                DEFAULT_MODEL_TYPE,
+                DEFAULT_ENGINE,
+                DEFAULT_MODEL_NAME,
+                DEFAULT_MODEL_PATH,
+                DEFAULT_LABEL_PATH,
+                DEFAULT_THRESHOLD,
+                DEFAULT_IOU_THRESHOLD,
+                DEFAULT_INPUT_SIZE,
+                DEFAULT_DETECT_INTERVAL,
+                DEFAULT_USE_GPU
+        );
     }
 
     private static String getString(JSONObject options, String key, String defaultValue) {
@@ -120,6 +163,26 @@ public final class DetectConfig {
         return defaultValue;
     }
 
+    private static boolean getBoolean(JSONObject options, String key, boolean defaultValue) {
+        Object value = options.get(key);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            if ("true".equalsIgnoreCase(text) || "1".equals(text)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(text) || "0".equals(text)) {
+                return false;
+            }
+        }
+        return defaultValue;
+    }
+
     static void invokeCallback(UniJSCallback uniCallback, JSONObject result, boolean keepAlive) {
         if (uniCallback == null) {
             return;
@@ -136,31 +199,6 @@ public final class DetectConfig {
             uniCallback.invoke(result);
         } catch (Throwable throwable) {
             Log.e(TAG, "Callback invoke failed", throwable);
-        }
-    }
-
-    public static final class Snapshot {
-        public final String modelType;
-        public final String engine;
-        public final String modelName;
-        public final double threshold;
-        public final int detectInterval;
-        public final int inputSize;
-
-        private Snapshot(
-                String modelType,
-                String engine,
-                String modelName,
-                double threshold,
-                int detectInterval,
-                int inputSize
-        ) {
-            this.modelType = modelType;
-            this.engine = engine;
-            this.modelName = modelName;
-            this.threshold = threshold;
-            this.detectInterval = detectInterval;
-            this.inputSize = inputSize;
         }
     }
 }

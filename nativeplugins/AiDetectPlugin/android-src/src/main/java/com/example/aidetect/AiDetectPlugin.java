@@ -21,6 +21,7 @@ public class AiDetectPlugin extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public void test(JSONObject options, UniJSCallback callback) {
+        Log.e(TAG, "test called, options=" + String.valueOf(options));
         JSONObject result = new JSONObject();
         result.put("success", true);
         result.put("type", "plugin_test");
@@ -34,6 +35,7 @@ public class AiDetectPlugin extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public JSONObject startDetect(JSONObject options, UniJSCallback callback) {
+        Log.e(TAG, "startDetect entry, options=" + String.valueOf(options));
         Log.i(TAG, "startDetect called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
@@ -63,6 +65,7 @@ public class AiDetectPlugin extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public JSONObject startDetectSync(JSONObject options) {
+        Log.e(TAG, "startDetectSync entry, options=" + String.valueOf(options));
         Log.i(TAG, "startDetectSync called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
@@ -154,11 +157,13 @@ public class AiDetectPlugin extends UniModule {
 
     private void openDetectActivity(Context context) {
         try {
+            Log.e(TAG, "openDetectActivity, context=" + context.getClass().getName());
             Intent intent = new Intent(context, DetectActivity.class);
             if (!(context instanceof Activity)) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }
             context.startActivity(intent);
+            Log.e(TAG, "openDetectActivity startActivity called");
         } catch (Throwable throwable) {
             Log.e(TAG, "Failed to open DetectActivity", throwable);
         }
