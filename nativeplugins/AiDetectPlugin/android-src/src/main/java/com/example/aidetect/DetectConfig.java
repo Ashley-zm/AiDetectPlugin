@@ -12,18 +12,18 @@ public final class DetectConfig {
 
     private static final String TAG = "AiDetectPlugin";
     private static final String DEFAULT_MODEL_TYPE = "detection";
-    private static final String DEFAULT_ENGINE = "mock";
-    private static final String DEFAULT_MODEL_NAME = "Mock YOLO";
-    private static final String DEFAULT_MODEL_PATH = "";
-    private static final String DEFAULT_LABEL_PATH = "";
+    private static final String DEFAULT_ENGINE = "ncnn";
+    private static final String DEFAULT_MODEL_NAME = "yolov8n";
+    private static final String DEFAULT_MODEL_PATH = "models/yolov8n_ncnn/yolov8n.param";
+    private static final String DEFAULT_LABEL_PATH = "models/yolov8n_ncnn/labels.txt";
     private static final double DEFAULT_THRESHOLD = 0.5D;
     private static final double DEFAULT_IOU_THRESHOLD = 0.45D;
-    private static final int DEFAULT_INPUT_SIZE = 320;
+    private static final int DEFAULT_INPUT_SIZE = 640;
     private static final int DEFAULT_DETECT_INTERVAL = 500;
+    private static final int DEFAULT_CALLBACK_INTERVAL = 500;
     private static final boolean DEFAULT_USE_GPU = false;
 
     private static DetectConfig current = defaults();
-    private static UniJSCallback callback;
 
     public final String modelType;
     public final String engine;
@@ -34,6 +34,7 @@ public final class DetectConfig {
     public final double iouThreshold;
     public final int inputSize;
     public final int detectInterval;
+    public final int callbackInterval;
     public final boolean useGpu;
 
     private DetectConfig(
@@ -46,6 +47,7 @@ public final class DetectConfig {
             double iouThreshold,
             int inputSize,
             int detectInterval,
+            int callbackInterval,
             boolean useGpu
     ) {
         this.modelType = modelType;
@@ -57,6 +59,7 @@ public final class DetectConfig {
         this.iouThreshold = iouThreshold;
         this.inputSize = inputSize;
         this.detectInterval = detectInterval;
+        this.callbackInterval = callbackInterval;
         this.useGpu = useGpu;
     }
 
@@ -76,6 +79,7 @@ public final class DetectConfig {
                 getDouble(options, "iouThreshold", DEFAULT_IOU_THRESHOLD),
                 getInt(options, "inputSize", DEFAULT_INPUT_SIZE),
                 getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL),
+                getInt(options, "callbackInterval", DEFAULT_CALLBACK_INTERVAL),
                 getBoolean(options, "useGpu", DEFAULT_USE_GPU)
         );
     }
@@ -84,30 +88,31 @@ public final class DetectConfig {
         return current;
     }
 
-    public static synchronized void setCallback(UniJSCallback uniCallback) {
-        callback = uniCallback;
+    public static void setCallback(UniJSCallback uniCallback) {
+        DetectCallbackManager.setCallback(uniCallback);
     }
 
-    public static synchronized void clearCallback() {
-        callback = null;
+    public static void clearCallback() {
+        DetectCallbackManager.clearCallback();
     }
 
     public static void notifyCallback(boolean success, String type, String message) {
-        UniJSCallback currentCallback;
-        synchronized (DetectConfig.class) {
-            currentCallback = callback;
-        }
-
-        if (currentCallback == null) {
-            return;
-        }
-
         JSONObject result = new JSONObject();
         result.put("success", success);
-        result.put("type", type);
+        if (success) {
+            result.put("type", type);
+        } else {
+            result.put("type", "error");
+            result.put("code", type);
+        }
         result.put("message", message);
+        result.put("timestamp", System.currentTimeMillis());
 
-        invokeCallback(currentCallback, result, true);
+        notifyCallback(result);
+    }
+
+    public static void notifyCallback(JSONObject result) {
+        DetectCallbackManager.notify(result);
     }
 
     private static DetectConfig defaults() {
@@ -121,6 +126,7 @@ public final class DetectConfig {
                 DEFAULT_IOU_THRESHOLD,
                 DEFAULT_INPUT_SIZE,
                 DEFAULT_DETECT_INTERVAL,
+                DEFAULT_CALLBACK_INTERVAL,
                 DEFAULT_USE_GPU
         );
     }

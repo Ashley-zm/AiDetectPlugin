@@ -39,25 +39,30 @@ public class AiDetectPlugin extends UniModule {
         Log.i(TAG, "startDetect called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
-            DetectConfig.setCallback(callback);
+            DetectCallbackManager.setCallback(callback);
 
             Context context = getContext();
 
             if (context == null) {
-                JSONObject result = createResult(false, "activity_open_failed", "无法获取 Android Context");
+                JSONObject result = createResult(false, DetectErrorCode.CAMERA_BIND_FAILED, "无法获取 Android Context");
+                invokeCallback(callback, result, false);
+                return result;
+            }
+
+            String openError = openDetectActivity(context);
+            if (openError != null) {
+                JSONObject result = createResult(false, DetectErrorCode.CAMERA_BIND_FAILED, openError);
                 invokeCallback(callback, result, false);
                 return result;
             }
 
             JSONObject result = createResult(true, "activity_opened", "DetectActivity 已打开");
             invokeCallback(callback, result, true);
-
-            openDetectActivity(context);
             return result;
         } catch (Throwable throwable) {
             Log.e(TAG, "startDetect failed", throwable);
 
-            JSONObject result = createResult(false, "start_detect_exception", throwable.toString());
+            JSONObject result = createResult(false, errorCodeOf(throwable, DetectErrorCode.MODEL_LOAD_FAILED), messageOf(throwable));
             invokeCallback(callback, result, false);
             return result;
         }
@@ -69,21 +74,64 @@ public class AiDetectPlugin extends UniModule {
         Log.i(TAG, "startDetectSync called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
-            DetectConfig.clearCallback();
+            DetectCallbackManager.clearCallback();
 
             Context context = getContext();
 
             if (context == null) {
-                return createResult(false, "activity_open_failed", "无法获取 Android Context");
+                return createResult(false, DetectErrorCode.CAMERA_BIND_FAILED, "无法获取 Android Context");
+            }
+
+            String openError = openDetectActivity(context);
+            if (openError != null) {
+                return createResult(false, DetectErrorCode.CAMERA_BIND_FAILED, openError);
             }
 
             JSONObject result = createResult(true, "activity_opened", "DetectActivity 已打开");
-            openDetectActivity(context);
             return result;
         } catch (Throwable throwable) {
             Log.e(TAG, "startDetectSync failed", throwable);
-            return createResult(false, "start_detect_exception", throwable.toString());
+            return createResult(false, errorCodeOf(throwable, DetectErrorCode.MODEL_LOAD_FAILED), messageOf(throwable));
         }
+    }
+
+    @UniJSMethod(uiThread = true)
+    public JSONObject stopDetect(JSONObject options, UniJSCallback callback) {
+        Log.i(TAG, "stopDetect called, options=" + String.valueOf(options));
+        boolean stopped = DetectActivity.stopCurrentDetect();
+        JSONObject result = createResult(
+                true,
+                "detect_stopped",
+                stopped ? "检测已停止" : "当前没有正在运行的检测页面"
+        );
+        invokeCallback(callback, result, false);
+        return result;
+    }
+
+    @UniJSMethod(uiThread = true)
+    public JSONObject takeSnapshot(JSONObject options, UniJSCallback callback) {
+        Log.i(TAG, "takeSnapshot called, options=" + String.valueOf(options));
+        if (DetectActivity.getActiveActivity() == null) {
+            JSONObject result = JsonUtils.snapshotError(
+                    DetectErrorCode.SNAPSHOT_ACTIVITY_NOT_RUNNING,
+                    "检测页面未运行，无法拍照",
+                    null,
+                    false
+            );
+            invokeCallback(callback, result, false);
+            return result;
+        }
+
+        boolean accepted = DetectActivity.takeSnapshotCurrent(options, callback);
+        if (!accepted) {
+            return JsonUtils.snapshotError(
+                    DetectErrorCode.SNAPSHOT_BUSY,
+                    "拍照未开始或正在进行",
+                    null,
+                    false
+            );
+        }
+        return createResult(true, "snapshot_started", "拍照任务已开始");
     }
 
     private Context getContext() {
@@ -155,7 +203,7 @@ public class AiDetectPlugin extends UniModule {
         return null;
     }
 
-    private void openDetectActivity(Context context) {
+    private String openDetectActivity(Context context) {
         try {
             Log.e(TAG, "openDetectActivity, context=" + context.getClass().getName());
             Intent intent = new Intent(context, DetectActivity.class);
@@ -164,20 +212,42 @@ public class AiDetectPlugin extends UniModule {
             }
             context.startActivity(intent);
             Log.e(TAG, "openDetectActivity startActivity called");
+            return null;
         } catch (Throwable throwable) {
             Log.e(TAG, "Failed to open DetectActivity", throwable);
+            return throwable.toString();
         }
     }
 
     private JSONObject createResult(boolean success, String type, String message) {
         JSONObject result = new JSONObject();
         result.put("success", success);
-        result.put("type", type);
+        if (success) {
+            result.put("type", type);
+        } else {
+            result.put("type", "error");
+            result.put("code", type);
+        }
         result.put("message", message);
+        result.put("timestamp", System.currentTimeMillis());
         return result;
     }
 
     private void invokeCallback(UniJSCallback callback, JSONObject result, boolean keepAlive) {
         DetectConfig.invokeCallback(callback, result, keepAlive);
+    }
+
+    private String errorCodeOf(Throwable throwable, String fallbackCode) {
+        if (throwable instanceof DetectException) {
+            return ((DetectException) throwable).getCode();
+        }
+        return fallbackCode;
+    }
+
+    private String messageOf(Throwable throwable) {
+        if (throwable instanceof DetectException && throwable.getMessage() != null) {
+            return throwable.getMessage();
+        }
+        return throwable == null ? "Unknown error" : throwable.toString();
     }
 }

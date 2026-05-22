@@ -4,10 +4,12 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Environment;
 import android.util.Log;
 import android.util.Size;
 import android.view.Gravity;
@@ -19,6 +21,8 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
@@ -30,19 +34,30 @@ import androidx.lifecycle.LifecycleRegistry;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
+import com.alibaba.fastjson.JSONObject;
+
+import java.io.File;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import io.dcloud.feature.uniapp.bridge.UniJSCallback;
 
 public class DetectActivity extends Activity implements LifecycleOwner {
 
     private static final String TAG = "AiDetectPlugin";
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
+    private static WeakReference<DetectActivity> activeActivityRef;
 
     private final LifecycleRegistry lifecycleRegistry = new LifecycleRegistry(this);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Executor mainExecutor = mainHandler::post;
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
+    private final ImageProxyBitmapConverter bitmapConverter = new ImageProxyBitmapConverter();
+    private final Object modelLock = new Object();
+    private final AtomicBoolean isTakingPhoto = new AtomicBoolean(false);
 
     private PreviewView cameraPreview;
     private DetectOverlayView overlayView;
@@ -50,20 +65,57 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
+    private ImageCapture imageCapture;
     private VisionModel visionModel;
     private DetectConfig modelConfig;
-    private Bitmap placeholderBitmap;
     private long lastAnalyzeTimeMs = 0L;
     private int analyzedFrameCount = 0;
     private boolean hasTarget = false;
     private int detectionBoxCount = 0;
     private float maxScore = 0F;
     private String currentStatus = "";
+    private volatile boolean released = false;
+    private volatile boolean analysisEnabled = false;
+    private volatile int overlayWidth = 0;
+    private volatile int overlayHeight = 0;
+
+    public static DetectActivity getActiveActivity() {
+        return activeActivityRef == null ? null : activeActivityRef.get();
+    }
+
+    public static boolean stopCurrentDetect() {
+        DetectActivity activity = getActiveActivity();
+        if (activity == null) {
+            DetectCallbackManager.clearSnapshotCallback();
+            DetectCallbackManager.clearCallback();
+            return false;
+        }
+
+        activity.mainHandler.post(activity::stopAndFinish);
+        return true;
+    }
+
+    public static boolean takeSnapshotCurrent(JSONObject options, UniJSCallback callback) {
+        DetectActivity activity = getActiveActivity();
+        if (activity == null || activity.released) {
+            JSONObject result = JsonUtils.snapshotError(
+                    DetectErrorCode.SNAPSHOT_ACTIVITY_NOT_RUNNING,
+                    "检测页面未运行，无法拍照",
+                    null,
+                    false
+            );
+            DetectConfig.invokeCallback(callback, result, false);
+            return false;
+        }
+
+        return activity.capturePhotoAndFinish(callback);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Log.e(TAG, "DetectActivity onCreate");
+        activeActivityRef = new WeakReference<>(this);
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE);
         setTitle("AI检测页面");
         setContentView(createContentView());
@@ -102,9 +154,10 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     @Override
     protected void onDestroy() {
         Log.e(TAG, "DetectActivity onDestroy");
-        releaseCamera();
-        analysisExecutor.shutdownNow();
-        DetectConfig.clearCallback();
+        releaseDetectResources(true);
+        if (activeActivityRef != null && activeActivityRef.get() == this) {
+            activeActivityRef = null;
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY);
         super.onDestroy();
     }
@@ -128,6 +181,10 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         ));
 
         overlayView = new DetectOverlayView(this);
+        overlayView.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            overlayWidth = Math.max(0, right - left);
+            overlayHeight = Math.max(0, bottom - top);
+        });
         root.addView(overlayView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -150,12 +207,23 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         );
         bottomBar.addView(statusText, statusParams);
 
+        Button captureButton = new Button(this);
+        captureButton.setText("拍照");
+        captureButton.setAllCaps(false);
+        captureButton.setOnClickListener(v -> capturePhotoAndFinish());
+        LinearLayout.LayoutParams captureButtonParams = new LinearLayout.LayoutParams(
+                dp(88),
+                dp(44)
+        );
+        captureButtonParams.leftMargin = dp(12);
+        bottomBar.addView(captureButton, captureButtonParams);
+
         Button stopButton = new Button(this);
-        stopButton.setText("停止检测");
+        stopButton.setText("停止");
         stopButton.setAllCaps(false);
-        stopButton.setOnClickListener(v -> finish());
+        stopButton.setOnClickListener(v -> stopAndFinish());
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
-                dp(112),
+                dp(88),
                 dp(44)
         );
         buttonParams.leftMargin = dp(12);
@@ -218,6 +286,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         Log.e(TAG, "startCameraPreview");
         updateStatus("正在启动后置摄像头");
         DetectConfig.notifyCallback(true, "camera_permission_granted", "相机权限已授予");
+        released = false;
 
         if (!initVisionModel()) {
             return;
@@ -235,25 +304,23 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                 preview.setSurfaceProvider(cameraPreview.getSurfaceProvider());
 
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+                imageAnalysis = createImageAnalysis();
+                imageCapture = new ImageCapture.Builder()
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setTargetRotation(getWindowManager().getDefaultDisplay().getRotation())
+                        .build();
 
                 cameraProvider.unbindAll();
                 Log.e(TAG, "CameraProvider unbindAll done");
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview);
-                Log.e(TAG, "Preview bindToLifecycle success");
-
-                boolean analysisStarted = startImageAnalysis(cameraSelector);
-                Log.e(TAG, "ImageAnalysis started=" + analysisStarted);
-                if (analysisStarted) {
-                    updateStatus("后置摄像头预览中，Mock YOLO 已启动");
-                    DetectConfig.notifyCallback(true, "camera_preview_started", "CameraX 后置摄像头预览和 ImageAnalysis 已启动");
-                } else {
-                    updateStatus("后置摄像头预览中，ImageAnalysis 启动失败");
-                    DetectConfig.notifyCallback(true, "camera_preview_started", "CameraX 后置摄像头预览已启动，ImageAnalysis 启动失败");
-                }
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis, imageCapture);
+                analysisEnabled = true;
+                Log.e(TAG, "Preview/ImageAnalysis/ImageCapture bindToLifecycle success");
+                updateStatus("后置摄像头预览中，YOLO NCNN 已启动");
+                DetectConfig.notifyCallback(true, "camera_preview_started", "CameraX 后置摄像头预览、ImageAnalysis 和 ImageCapture 已启动");
             } catch (Throwable throwable) {
                 Log.e(TAG, "CameraX preview start failed", throwable);
                 updateStatus("摄像头启动失败：" + throwable.getClass().getSimpleName());
-                DetectConfig.notifyCallback(false, "camera_preview_failed", throwable.toString());
+                DetectCallbackManager.notifyError(DetectErrorCode.CAMERA_BIND_FAILED, throwable.toString());
             }
         }, mainExecutor);
     }
@@ -261,7 +328,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void handleCameraPermissionDenied() {
         Log.e(TAG, "handleCameraPermissionDenied");
         updateStatus("相机权限被拒绝");
-        DetectConfig.notifyCallback(false, "camera_permission_denied", "相机权限被拒绝，无法启动预览");
+        DetectCallbackManager.notifyError(DetectErrorCode.CAMERA_PERMISSION_DENIED, "相机权限被拒绝，无法启动预览");
     }
 
     private boolean initVisionModel() {
@@ -269,8 +336,10 @@ public class DetectActivity extends Activity implements LifecycleOwner {
 
         try {
             modelConfig = DetectConfig.snapshot();
-            visionModel = ModelFactory.create(modelConfig);
-            visionModel.init(this, modelConfig);
+            synchronized (modelLock) {
+                visionModel = ModelFactory.create(modelConfig);
+                visionModel.init(this, modelConfig);
+            }
             Log.e(TAG, "VisionModel initialized, modelType=" + modelConfig.modelType
                     + ", engine=" + modelConfig.engine
                     + ", modelName=" + modelConfig.modelName);
@@ -278,35 +347,29 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         } catch (Throwable throwable) {
             Log.e(TAG, "VisionModel init failed", throwable);
             updateStatus("模型初始化失败：" + throwable.getClass().getSimpleName());
-            DetectConfig.notifyCallback(false, "vision_model_init_failed", throwable.toString());
+            DetectCallbackManager.notifyError(throwable, DetectErrorCode.MODEL_LOAD_FAILED);
             releaseVisionModel();
             return false;
         }
     }
 
-    private boolean startImageAnalysis(@NonNull CameraSelector cameraSelector) {
-        try {
-            Log.e(TAG, "startImageAnalysis");
-            imageAnalysis = new ImageAnalysis.Builder()
-                    .setTargetResolution(new Size(640, 480))
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build();
-            imageAnalysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
-            Log.e(TAG, "ImageAnalysis analyzer set");
-            cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
-            Log.e(TAG, "ImageAnalysis bindToLifecycle success");
-            return true;
-        } catch (Throwable throwable) {
-            imageAnalysis = null;
-            Log.e(TAG, "ImageAnalysis start failed, keep preview only", throwable);
-            updateStatus("后置摄像头预览中，ImageAnalysis 启动失败");
-            DetectConfig.notifyCallback(false, "image_analysis_failed", throwable.toString());
-            return false;
-        }
+    private ImageAnalysis createImageAnalysis() {
+        Log.e(TAG, "createImageAnalysis");
+        ImageAnalysis analysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+        analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
+        Log.e(TAG, "ImageAnalysis analyzer set");
+        return analysis;
     }
 
     private void analyzeFrame(@NonNull ImageProxy imageProxy) {
         try {
+            if (released || !analysisEnabled) {
+                return;
+            }
+
             int width = imageProxy.getWidth();
             int height = imageProxy.getHeight();
             int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
@@ -327,24 +390,28 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             }
             lastAnalyzeTimeMs = nowMs;
 
-            int previewWidth = overlayView == null ? width : overlayView.getWidth();
-            int previewHeight = overlayView == null ? height : overlayView.getHeight();
-            if (previewWidth <= 0) {
-                previewWidth = Math.max(width, config.inputSize);
-            }
-            if (previewHeight <= 0) {
-                previewHeight = Math.max(height, config.inputSize);
+            Bitmap bitmap = null;
+            VisionResult visionResult;
+            try {
+                bitmap = bitmapConverter.toBitmap(imageProxy);
+                VisionResult rawResult;
+                synchronized (modelLock) {
+                    if (released || visionModel == null) {
+                        Log.e(TAG, "VisionModel is null, skip inference");
+                        DetectCallbackManager.notifyError(DetectErrorCode.MODEL_LOAD_FAILED, "VisionModel is null");
+                        return;
+                    }
+                    rawResult = visionModel.infer(bitmap);
+                }
+                visionResult = mapResultToOverlay(rawResult, bitmap.getWidth(), bitmap.getHeight());
+            } finally {
+                if (bitmap != null && !bitmap.isRecycled()) {
+                    bitmap.recycle();
+                }
             }
 
-            if (visionModel == null) {
-                Log.e(TAG, "VisionModel is null, skip inference");
-                return;
-            }
-
-            Bitmap bitmap = getOrCreatePlaceholderBitmap(previewWidth, previewHeight);
-            VisionResult visionResult = visionModel.infer(bitmap);
             int frameCount = ++analyzedFrameCount;
-            Log.i(TAG, "Mock YOLO analyzed"
+            Log.i(TAG, "YOLO analyzed"
                     + ", analyzedFrameCount=" + frameCount
                     + ", detectIntervalMs=" + detectIntervalMs
                     + ", boxes=" + visionResult.boxes.size()
@@ -353,6 +420,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             mainHandler.post(() -> updateVisionResult(frameCount, visionResult));
         } catch (Throwable throwable) {
             Log.e(TAG, "VisionModel infer failed", throwable);
+            DetectCallbackManager.notifyError(throwable, DetectErrorCode.NCNN_INFER_FAILED);
             mainHandler.post(() -> updateStatus("模型推理失败：" + throwable.getClass().getSimpleName()));
         } finally {
             imageProxy.close();
@@ -362,22 +430,6 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void updateStatus(String status) {
         currentStatus = status;
         refreshStatusText();
-    }
-
-    private Bitmap getOrCreatePlaceholderBitmap(int width, int height) {
-        int safeWidth = Math.max(1, width);
-        int safeHeight = Math.max(1, height);
-
-        if (placeholderBitmap != null
-                && !placeholderBitmap.isRecycled()
-                && placeholderBitmap.getWidth() == safeWidth
-                && placeholderBitmap.getHeight() == safeHeight) {
-            return placeholderBitmap;
-        }
-
-        recyclePlaceholderBitmap();
-        placeholderBitmap = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888);
-        return placeholderBitmap;
     }
 
     private void updateVisionResult(int frameCount, @NonNull VisionResult visionResult) {
@@ -394,7 +446,29 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             overlayView.setResults(visionResult.boxes);
         }
 
+        DetectCallbackManager.notifyVisionResult(visionResult);
         refreshStatusText();
+    }
+
+    private VisionResult mapResultToOverlay(@NonNull VisionResult rawResult, int bitmapWidth, int bitmapHeight) throws DetectException {
+        int targetWidth = overlayWidth > 0 ? overlayWidth : bitmapWidth;
+        int targetHeight = overlayHeight > 0 ? overlayHeight : bitmapHeight;
+        if (targetWidth <= 0) {
+            targetWidth = bitmapWidth;
+        }
+        if (targetHeight <= 0) {
+            targetHeight = bitmapHeight;
+        }
+
+        return new VisionResult(
+                rawResult.success,
+                rawResult.modelType,
+                rawResult.engine,
+                rawResult.modelName,
+                rawResult.hasTarget,
+                CoordinateUtils.mapBoxes(rawResult.boxes, bitmapWidth, bitmapHeight, targetWidth, targetHeight),
+                rawResult.timestamp
+        );
     }
 
     private void refreshStatusText() {
@@ -410,18 +484,259 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         }
     }
 
+    public void capturePhotoAndFinish() {
+        capturePhotoAndFinish(null);
+    }
+
+    public boolean capturePhotoAndFinish(UniJSCallback callback) {
+        if (released) {
+            notifySnapshotAndMaybeFinish(
+                    JsonUtils.snapshotError(
+                            DetectErrorCode.SNAPSHOT_ACTIVITY_NOT_RUNNING,
+                            "检测页面未运行，无法拍照",
+                            null,
+                            false
+                    ),
+                    false
+            );
+            return false;
+        }
+
+        if (!isTakingPhoto.compareAndSet(false, true)) {
+            notifySnapshotCallbackOnly(
+                    callback,
+                    JsonUtils.snapshotError(
+                            DetectErrorCode.SNAPSHOT_BUSY,
+                            "正在拍照，请勿重复点击",
+                            null,
+                            false
+                    )
+            );
+            return false;
+        }
+
+        if (callback != null) {
+            DetectCallbackManager.setSnapshotCallback(callback);
+        }
+
+        ImageCapture currentImageCapture = imageCapture;
+        if (currentImageCapture == null) {
+            isTakingPhoto.set(false);
+            notifySnapshotAndMaybeFinish(
+                    JsonUtils.snapshotError(
+                            DetectErrorCode.IMAGE_CAPTURE_NOT_READY,
+                            "ImageCapture 未初始化，无法拍照",
+                            null,
+                            true
+                    ),
+                    true
+            );
+            return false;
+        }
+
+        File photoFile;
+        try {
+            photoFile = createPhotoFile();
+        } catch (DetectException detectException) {
+            isTakingPhoto.set(false);
+            notifySnapshotAndMaybeFinish(
+                    JsonUtils.snapshotError(
+                            detectException.getCode(),
+                            detectException.getMessage(),
+                            null,
+                            true
+                    ),
+                    true
+            );
+            return false;
+        }
+
+        analysisEnabled = false;
+        if (imageAnalysis != null) {
+            imageAnalysis.clearAnalyzer();
+        }
+        updateStatus("正在拍照");
+
+        ImageCapture.OutputFileOptions outputOptions =
+                new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+        try {
+            currentImageCapture.takePicture(
+                    outputOptions,
+                    analysisExecutor,
+                    new ImageCapture.OnImageSavedCallback() {
+                        @Override
+                        public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
+                            handlePhotoSaved(photoFile);
+                        }
+
+                        @Override
+                        public void onError(@NonNull ImageCaptureException exception) {
+                            Log.e(TAG, "ImageCapture takePicture failed", exception);
+                            isTakingPhoto.set(false);
+                            notifySnapshotAndMaybeFinish(
+                                    JsonUtils.snapshotError(
+                                            DetectErrorCode.SNAPSHOT_FAILED,
+                                            "拍照失败：" + exception.getMessage(),
+                                            photoFile.getAbsolutePath(),
+                                            true
+                                    ),
+                                    true
+                            );
+                        }
+                    }
+            );
+        } catch (Throwable throwable) {
+            Log.e(TAG, "ImageCapture takePicture dispatch failed", throwable);
+            isTakingPhoto.set(false);
+            notifySnapshotAndMaybeFinish(
+                    JsonUtils.snapshotError(
+                            DetectErrorCode.SNAPSHOT_FAILED,
+                            "拍照失败：" + throwable.getMessage(),
+                            photoFile.getAbsolutePath(),
+                            true
+                    ),
+                    true
+            );
+            return false;
+        }
+        return true;
+    }
+
+    private File createPhotoFile() throws DetectException {
+        File dir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        if (dir == null) {
+            dir = new File(getFilesDir(), Environment.DIRECTORY_PICTURES);
+        }
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new DetectException(
+                    DetectErrorCode.SNAPSHOT_DIR_CREATE_FAILED,
+                    "创建拍照目录失败：" + dir.getAbsolutePath()
+            );
+        }
+
+        return new File(dir, "detect_" + System.currentTimeMillis() + ".jpg");
+    }
+
+    private void handlePhotoSaved(@NonNull File photoFile) {
+        String imagePath = photoFile.getAbsolutePath();
+        try {
+            VisionResult visionResult = inferSnapshotImage(imagePath);
+            JSONObject result = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis());
+            isTakingPhoto.set(false);
+            notifySnapshotAndMaybeFinish(result, true);
+        } catch (Throwable throwable) {
+            Log.e(TAG, "Snapshot image infer failed", throwable);
+            isTakingPhoto.set(false);
+            notifySnapshotAndMaybeFinish(
+                    JsonUtils.snapshotError(
+                            DetectErrorCode.SNAPSHOT_INFER_FAILED,
+                            "拍照成功，但对照片执行 YOLO 推理失败：" + messageOf(throwable),
+                            imagePath,
+                            true
+                    ),
+                    true
+            );
+        }
+    }
+
+    private VisionResult inferSnapshotImage(String imagePath) throws DetectException {
+        // TODO: If device-specific JPEG orientation is wrong, read Exif rotation here before inference.
+        Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+        if (bitmap == null) {
+            throw new DetectException(
+                    DetectErrorCode.SNAPSHOT_IMAGE_DECODE_FAILED,
+                    "拍照图片解码失败：" + imagePath
+            );
+        }
+
+        try {
+            synchronized (modelLock) {
+                if (visionModel == null) {
+                    throw new DetectException(
+                            DetectErrorCode.SNAPSHOT_INFER_FAILED,
+                            "YOLO-NCNN 模型已释放，无法执行拍照图片推理"
+                    );
+                }
+                return visionModel.infer(bitmap);
+            }
+        } catch (DetectException detectException) {
+            throw detectException;
+        } catch (Throwable throwable) {
+            throw new DetectException(
+                    DetectErrorCode.SNAPSHOT_INFER_FAILED,
+                    "照片 YOLO 推理失败：" + throwable.getMessage(),
+                    throwable
+            );
+        } finally {
+            if (!bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+        }
+    }
+
+    private void notifySnapshotCallbackOnly(UniJSCallback callback, JSONObject result) {
+        if (callback != null) {
+            mainHandler.post(() -> DetectConfig.invokeCallback(callback, result, false));
+        } else {
+            DetectCallbackManager.notifySnapshotResult(result);
+        }
+    }
+
+    private void notifySnapshotAndMaybeFinish(JSONObject result, boolean finishAfterNotify) {
+        DetectCallbackManager.notifySnapshotResult(result, () -> {
+            if (finishAfterNotify) {
+                finishDetectAfterSnapshot();
+            }
+        });
+    }
+
+    private static String messageOf(Throwable throwable) {
+        if (throwable instanceof DetectException && throwable.getMessage() != null) {
+            return throwable.getMessage();
+        }
+        return throwable == null ? "未知错误" : throwable.toString();
+    }
+
+    private void stopAndFinish() {
+        releaseDetectResources(true);
+        finish();
+    }
+
+    private void finishDetectAfterSnapshot() {
+        releaseDetectResources(true);
+        finish();
+    }
+
+    private void releaseDetectResources(boolean clearCallback) {
+        if (released) {
+            if (clearCallback) {
+                DetectCallbackManager.clearSnapshotCallback();
+                DetectCallbackManager.clearCallback();
+            }
+            return;
+        }
+        released = true;
+        releaseCamera();
+        analysisExecutor.shutdownNow();
+        if (clearCallback) {
+            DetectCallbackManager.clearSnapshotCallback();
+            DetectCallbackManager.clearCallback();
+        }
+    }
+
     private void releaseCamera() {
+        analysisEnabled = false;
         if (overlayView != null) {
             overlayView.setResults(null);
         }
 
         releaseVisionModel();
-        recyclePlaceholderBitmap();
 
         if (imageAnalysis != null) {
             imageAnalysis.clearAnalyzer();
             imageAnalysis = null;
         }
+        imageCapture = null;
 
         if (cameraProvider != null) {
             cameraProvider.unbindAll();
@@ -435,22 +750,17 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     }
 
     private void releaseVisionModel() {
-        if (visionModel != null) {
-            try {
-                visionModel.release();
-            } catch (Throwable throwable) {
-                Log.e(TAG, "VisionModel release failed", throwable);
+        synchronized (modelLock) {
+            if (visionModel != null) {
+                try {
+                    visionModel.release();
+                } catch (Throwable throwable) {
+                    Log.e(TAG, "VisionModel release failed", throwable);
+                }
+                visionModel = null;
             }
-            visionModel = null;
+            modelConfig = null;
         }
-        modelConfig = null;
-    }
-
-    private void recyclePlaceholderBitmap() {
-        if (placeholderBitmap != null && !placeholderBitmap.isRecycled()) {
-            placeholderBitmap.recycle();
-        }
-        placeholderBitmap = null;
     }
 
     private int dp(int value) {

@@ -70,6 +70,7 @@ public class MockYoloDetector implements VisionModel {
                 true,
                 config.modelType,
                 config.engine,
+                config.modelName,
                 hasTarget,
                 boxes,
                 System.currentTimeMillis()
