@@ -11,6 +11,11 @@ import java.util.Map;
 
 public final class LabelUtils {
 
+    /**
+     * Canonical labels.txt format: one label per line, with the zero-based line
+     * number used as classId. The legacy "classId: label" format remains
+     * readable for external target models.
+     */
     private LabelUtils() {
     }
 
