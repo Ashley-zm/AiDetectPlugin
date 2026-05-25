@@ -38,6 +38,7 @@ import com.alibaba.fastjson.JSONObject;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
+import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -436,6 +437,9 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                         Log.i(TAG, "Pipeline analyzed"
                                 + ", analyzedFrameCount=" + frameCount
                                 + ", status=" + mappedResult.pipelineStatus
+                                + ", fuzzyLabel=" + labelOf(mappedResult.fuzzyResult)
+                                + ", remakeLabel=" + labelOf(mappedResult.remakeResult)
+                                + ", detectionLabels=" + detectionLabelsOf(mappedResult.detectionResult)
                                 + ", hasTarget=" + mappedResult.hasTarget);
                         mainHandler.post(() -> updatePipelineResult(frameCount, mappedResult));
                     } else {
@@ -451,6 +455,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                                 + ", analyzedFrameCount=" + frameCount
                                 + ", detectIntervalMs=" + detectIntervalMs
                                 + ", boxes=" + visionResult.boxes.size()
+                                + ", labels=" + detectionLabelsOf(visionResult)
                                 + ", hasTarget=" + visionResult.hasTarget);
                         mainHandler.post(() -> updateVisionResult(frameCount, visionResult));
                     }
@@ -719,9 +724,20 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             JSONObject result;
             if (modelConfig != null && modelConfig.pipelineMode) {
                 PipelineResult pipelineResult = inferSnapshotPipeline(imagePath);
+                Log.i(TAG, "Snapshot pipeline analyzed"
+                        + ", imagePath=" + imagePath
+                        + ", status=" + pipelineResult.pipelineStatus
+                        + ", fuzzyLabel=" + labelOf(pipelineResult.fuzzyResult)
+                        + ", remakeLabel=" + labelOf(pipelineResult.remakeResult)
+                        + ", detectionLabels=" + detectionLabelsOf(pipelineResult.detectionResult)
+                        + ", hasTarget=" + pipelineResult.hasTarget);
                 result = JsonUtils.pipelineSnapshotResult(imagePath, pipelineResult);
             } else {
                 VisionResult visionResult = inferSnapshotImage(imagePath);
+                Log.i(TAG, "Snapshot YOLO analyzed"
+                        + ", imagePath=" + imagePath
+                        + ", labels=" + detectionLabelsOf(visionResult)
+                        + ", hasTarget=" + visionResult.hasTarget);
                 result = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis());
             }
             isTakingPhoto.set(false);
@@ -901,6 +917,32 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             }
             modelConfig = null;
         }
+    }
+
+    private String labelOf(VisionResult result) {
+        if (result == null || result.label == null || result.label.trim().length() == 0) {
+            return "null";
+        }
+        return result.label;
+    }
+
+    private String detectionLabelsOf(VisionResult result) {
+        if (result == null || result.boxes == null || result.boxes.isEmpty()) {
+            return "[]";
+        }
+
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < result.boxes.size(); i++) {
+            DetectionBox box = result.boxes.get(i);
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(box.label == null || box.label.trim().length() == 0 ? "class_" + box.classId : box.label)
+                    .append(":")
+                    .append(String.format(Locale.US, "%.2f", box.score));
+        }
+        builder.append("]");
+        return builder.toString();
     }
 
     private int dp(int value) {
