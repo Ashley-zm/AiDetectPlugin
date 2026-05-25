@@ -10,6 +10,47 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.3.0 - 2026-05-25
+
+Package:
+
+- `releases/AiDetectPlugin-v1.3.0`
+- `releases/AiDetectPlugin-v1.3.0.zip`
+
+Changes:
+
+- Added fixed quality detection Pipeline before target detection:
+  - `resnet18_fuzzy`
+  - `resnet18_remake`
+  - dynamic uni-app `targetModel`
+- Added quality model assets under:
+  - `models/quality/resnet18_fuzzy_ncnn`
+  - `models/quality/resnet18_remake_ncnn`
+- Added `pipelineMode` and dynamic `targetModel` config support.
+- Added Pipeline statuses:
+  - `FUZZY`
+  - `REMAKE`
+  - `NO_TARGET`
+  - `TARGET_FOUND`
+  - `ERROR`
+- Added real-time camera Pipeline inference and snapshot Pipeline inference.
+- Added camera overlay status tip for fuzzy/remake/no-target/pass states.
+- Added Pipeline JSON output fields:
+  - `pipelineStatus`
+  - `resultSource`
+  - `targetModelName`
+  - `fuzzyResult`
+  - `remakeResult`
+  - `detectionResult`
+- Reworked NCNN JNI model ownership to support multiple model instances in one Pipeline.
+- Rebuilt and synced `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar`.
+
+Notes:
+
+- The fixed quality models are loaded from Android assets only; runtime code does not depend on Windows development paths such as `D:\aj\models\...`.
+- When `pipelineMode` is true, `targetModel` is required. Missing config returns `TARGET_MODEL_MISSING`.
+- The original single YOLO model flow remains available when `pipelineMode` is false.
+
 ## v1.2.4 - 2026-05-21
 
 Package:

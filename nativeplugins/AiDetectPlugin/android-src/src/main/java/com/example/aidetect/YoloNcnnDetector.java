@@ -5,7 +5,6 @@ import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.util.Log;
 
-import java.io.InputStream;
 import java.util.Map;
 
 public class YoloNcnnDetector implements VisionModel {
@@ -28,8 +27,9 @@ public class YoloNcnnDetector implements VisionModel {
     }
 
     private DetectConfig config;
+    private ModelConfig modelConfig;
     private Map<Integer, String> labels;
-    private boolean initialized = false;
+    private long nativeHandle = 0L;
 
     @Override
     public void init(Context context, DetectConfig config) throws Exception {
@@ -42,63 +42,88 @@ public class YoloNcnnDetector implements VisionModel {
         }
 
         this.config = config;
-        String paramPath = resolveParamPath(config.modelPath);
-        String binPath = resolveBinPath(config.modelPath);
-        assertAssetExists(context, paramPath);
-        assertAssetExists(context, binPath);
+        this.modelConfig = config.targetModelConfig == null
+                ? new ModelConfig(
+                config.modelType,
+                config.engine,
+                config.modelName,
+                config.modelPath,
+                config.binPath,
+                config.labelPath,
+                config.inputWidth,
+                config.inputHeight,
+                config.inputSize,
+                config.threshold,
+                config.iouThreshold,
+                config.topK,
+                config.positiveLabel,
+                config.passLabel,
+                config.useGpu
+        )
+                : config.targetModelConfig;
+
+        String paramPath;
+        String binPath;
+        try {
+            paramPath = AssetModelPathUtils.resolveParamPath(context, modelConfig);
+            binPath = AssetModelPathUtils.resolveBinPath(context, modelConfig, paramPath);
+            AssetModelPathUtils.assertAssetExists(context, modelConfig.labelPath, DetectErrorCode.TARGET_MODEL_LOAD_FAILED);
+        } catch (DetectException detectException) {
+            throw new DetectException(DetectErrorCode.TARGET_MODEL_LOAD_FAILED, detectException.getMessage(), detectException);
+        }
 
         try {
-            this.labels = LabelUtils.loadLabels(context, config.labelPath);
+            this.labels = LabelUtils.loadLabels(context, modelConfig.labelPath);
         } catch (Throwable throwable) {
             throw new DetectException(
-                    DetectErrorCode.NCNN_MODEL_LOAD_FAILED,
-                    "标签文件加载失败：" + config.labelPath,
+                    DetectErrorCode.TARGET_MODEL_LOAD_FAILED,
+                    "标签文件加载失败：" + modelConfig.labelPath,
                     throwable
             );
         }
 
         try {
-            this.initialized = loadModelNative(
+            nativeHandle = loadModelNative(
                     context.getAssets(),
                     paramPath,
                     binPath,
-                    config.labelPath,
-                    config.useGpu
+                    modelConfig.labelPath,
+                    modelConfig.useGpu
             );
         } catch (Throwable throwable) {
             throw new DetectException(
-                    DetectErrorCode.NCNN_MODEL_LOAD_FAILED,
-                    "NCNN 模型加载失败：" + throwable.getMessage(),
+                    DetectErrorCode.TARGET_MODEL_LOAD_FAILED,
+                    "NCNN 目标检测模型加载失败：" + throwable.getMessage(),
                     throwable
             );
         }
 
-        if (!initialized) {
+        if (nativeHandle == 0L) {
             throw new DetectException(
-                    DetectErrorCode.NCNN_MODEL_LOAD_FAILED,
-                    "NCNN 模型加载失败：loadModelNative returned false"
+                    DetectErrorCode.TARGET_MODEL_LOAD_FAILED,
+                    "NCNN 目标检测模型加载失败：loadModelNative returned 0"
             );
         }
     }
 
     @Override
     public VisionResult infer(Bitmap bitmap) throws Exception {
-        if (!initialized) {
+        if (nativeHandle == 0L) {
             throw new DetectException(
-                    DetectErrorCode.NCNN_INFER_FAILED,
+                    DetectErrorCode.TARGET_DETECT_FAILED,
                     "YoloNcnnDetector is not initialized"
             );
         }
 
         try {
-            float[] nativeBoxes = inferNative(bitmap);
+            float[] nativeBoxes = inferNative(nativeHandle, bitmap, Math.max(1, modelConfig.inputSize));
             return YoloPostProcessor.fromNativeDetections(nativeBoxes, config, labels);
         } catch (DetectException detectException) {
             throw detectException;
         } catch (Throwable throwable) {
             throw new DetectException(
-                    DetectErrorCode.NCNN_INFER_FAILED,
-                    "NCNN 推理失败：" + throwable.getMessage(),
+                    DetectErrorCode.TARGET_DETECT_FAILED,
+                    "NCNN 目标检测推理失败：" + throwable.getMessage(),
                     throwable
             );
         }
@@ -106,63 +131,16 @@ public class YoloNcnnDetector implements VisionModel {
 
     @Override
     public void release() {
-        if (initialized && nativeLibraryLoadError == null) {
-            releaseNative();
+        if (nativeHandle != 0L && nativeLibraryLoadError == null) {
+            releaseNative(nativeHandle);
         }
-        initialized = false;
+        nativeHandle = 0L;
         config = null;
+        modelConfig = null;
         labels = null;
     }
 
-    private String resolveParamPath(String modelPath) {
-        if (modelPath == null || modelPath.trim().length() == 0) {
-            return "";
-        }
-
-        String path = modelPath.trim();
-        if (path.endsWith(".bin")) {
-            return path.substring(0, path.length() - 4) + ".param";
-        }
-        return path;
-    }
-
-    private String resolveBinPath(String modelPath) {
-        if (modelPath == null || modelPath.trim().length() == 0) {
-            return "";
-        }
-
-        String path = modelPath.trim();
-        if (path.endsWith(".param")) {
-            return path.substring(0, path.length() - 6) + ".bin";
-        }
-        return path;
-    }
-
-    private void assertAssetExists(Context context, String assetPath) throws DetectException {
-        if (assetPath == null || assetPath.trim().length() == 0) {
-            throw new DetectException(DetectErrorCode.NCNN_MODEL_LOAD_FAILED, "模型路径为空");
-        }
-
-        InputStream inputStream = null;
-        try {
-            inputStream = context.getAssets().open(assetPath);
-        } catch (Throwable throwable) {
-            throw new DetectException(
-                    DetectErrorCode.NCNN_MODEL_LOAD_FAILED,
-                    "模型文件不存在：" + assetPath,
-                    throwable
-            );
-        } finally {
-            if (inputStream != null) {
-                try {
-                    inputStream.close();
-                } catch (Throwable ignored) {
-                }
-            }
-        }
-    }
-
-    private native boolean loadModelNative(
+    private native long loadModelNative(
             AssetManager mgr,
             String paramPath,
             String binPath,
@@ -170,7 +148,7 @@ public class YoloNcnnDetector implements VisionModel {
             boolean useGpu
     );
 
-    private native float[] inferNative(Bitmap bitmap);
+    private native float[] inferNative(long nativeHandle, Bitmap bitmap, int inputSize);
 
-    private native void releaseNative();
+    private native void releaseNative(long nativeHandle);
 }

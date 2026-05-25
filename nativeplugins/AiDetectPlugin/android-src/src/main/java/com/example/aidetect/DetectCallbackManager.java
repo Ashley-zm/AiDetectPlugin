@@ -73,6 +73,19 @@ public final class DetectCallbackManager {
         notify(result);
     }
 
+    public static void notifyPipelineResult(PipelineResult pipelineResult) {
+        if (pipelineResult == null) {
+            notifyError("pipeline_result_empty", "PipelineResult is null");
+            return;
+        }
+
+        if (!shouldNotifyVisionResult()) {
+            return;
+        }
+
+        notify(JsonUtils.pipelineDetectResult(pipelineResult));
+    }
+
     public static void notifySnapshotResult(JSONObject result) {
         notifySnapshotResult(result, null);
     }

@@ -15,6 +15,7 @@ public final class DetectConfig {
     private static final String DEFAULT_ENGINE = "ncnn";
     private static final String DEFAULT_MODEL_NAME = "yolov8n";
     private static final String DEFAULT_MODEL_PATH = "models/yolov8n_ncnn/yolov8n.param";
+    private static final String DEFAULT_BIN_PATH = "models/yolov8n_ncnn/yolov8n.bin";
     private static final String DEFAULT_LABEL_PATH = "models/yolov8n_ncnn/labels.txt";
     private static final double DEFAULT_THRESHOLD = 0.5D;
     private static final double DEFAULT_IOU_THRESHOLD = 0.45D;
@@ -25,42 +26,52 @@ public final class DetectConfig {
 
     private static DetectConfig current = defaults();
 
+    public final boolean pipelineMode;
+    public final ModelConfig targetModelConfig;
     public final String modelType;
     public final String engine;
     public final String modelName;
     public final String modelPath;
+    public final String binPath;
     public final String labelPath;
     public final double threshold;
     public final double iouThreshold;
     public final int inputSize;
+    public final int inputWidth;
+    public final int inputHeight;
+    public final int topK;
+    public final String positiveLabel;
+    public final String passLabel;
     public final int detectInterval;
     public final int callbackInterval;
     public final boolean useGpu;
 
     private DetectConfig(
-            String modelType,
-            String engine,
-            String modelName,
-            String modelPath,
-            String labelPath,
-            double threshold,
-            double iouThreshold,
-            int inputSize,
+            boolean pipelineMode,
+            ModelConfig targetModelConfig,
             int detectInterval,
-            int callbackInterval,
-            boolean useGpu
+            int callbackInterval
     ) {
-        this.modelType = modelType;
-        this.engine = engine;
-        this.modelName = modelName;
-        this.modelPath = modelPath;
-        this.labelPath = labelPath;
-        this.threshold = threshold;
-        this.iouThreshold = iouThreshold;
-        this.inputSize = inputSize;
+        this.pipelineMode = pipelineMode;
+        this.targetModelConfig = targetModelConfig;
+        ModelConfig activeModel = targetModelConfig == null ? defaultTargetModel() : targetModelConfig;
+        this.modelType = activeModel.modelType;
+        this.engine = activeModel.engine;
+        this.modelName = activeModel.modelName;
+        this.modelPath = activeModel.modelPath;
+        this.binPath = activeModel.binPath;
+        this.labelPath = activeModel.labelPath;
+        this.threshold = activeModel.threshold;
+        this.iouThreshold = activeModel.iouThreshold;
+        this.inputSize = activeModel.inputSize;
+        this.inputWidth = activeModel.inputWidth;
+        this.inputHeight = activeModel.inputHeight;
+        this.topK = activeModel.topK;
+        this.positiveLabel = activeModel.positiveLabel;
+        this.passLabel = activeModel.passLabel;
         this.detectInterval = detectInterval;
         this.callbackInterval = callbackInterval;
-        this.useGpu = useGpu;
+        this.useGpu = activeModel.useGpu;
     }
 
     public static synchronized void save(JSONObject options) {
@@ -69,23 +80,34 @@ public final class DetectConfig {
             return;
         }
 
-        current = new DetectConfig(
-                getString(options, "modelType", DEFAULT_MODEL_TYPE),
-                getString(options, "engine", DEFAULT_ENGINE),
-                getString(options, "modelName", DEFAULT_MODEL_NAME),
-                getString(options, "modelPath", DEFAULT_MODEL_PATH),
-                getString(options, "labelPath", DEFAULT_LABEL_PATH),
-                getDouble(options, "threshold", DEFAULT_THRESHOLD),
-                getDouble(options, "iouThreshold", DEFAULT_IOU_THRESHOLD),
-                getInt(options, "inputSize", DEFAULT_INPUT_SIZE),
-                getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL),
-                getInt(options, "callbackInterval", DEFAULT_CALLBACK_INTERVAL),
-                getBoolean(options, "useGpu", DEFAULT_USE_GPU)
-        );
+        boolean pipelineMode = ModelConfig.getBoolean(options, "pipelineMode", false);
+        int detectInterval = ModelConfig.getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL);
+        int callbackInterval = ModelConfig.getInt(options, "callbackInterval", DEFAULT_CALLBACK_INTERVAL);
+        JSONObject targetOptions = options.getJSONObject("targetModel");
+        ModelConfig targetModelConfig;
+        if (targetOptions != null) {
+            targetModelConfig = ModelConfig.fromJson(targetOptions, defaultTargetModel());
+        } else if (pipelineMode) {
+            targetModelConfig = null;
+        } else {
+            targetModelConfig = ModelConfig.fromJson(options, defaultTargetModel());
+        }
+
+        current = new DetectConfig(pipelineMode, targetModelConfig, detectInterval, callbackInterval);
     }
 
     public static synchronized DetectConfig snapshot() {
         return current;
+    }
+
+    public static DetectConfig fromModelConfig(ModelConfig modelConfig) {
+        return new DetectConfig(false, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL);
+    }
+
+    public void validateForStart() throws DetectException {
+        if (pipelineMode && targetModelConfig == null) {
+            throw new DetectException(DetectErrorCode.TARGET_MODEL_MISSING, "targetModel 不能为空");
+        }
     }
 
     public static void setCallback(UniJSCallback uniCallback) {
@@ -116,77 +138,27 @@ public final class DetectConfig {
     }
 
     private static DetectConfig defaults() {
-        return new DetectConfig(
+        return new DetectConfig(false, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL);
+    }
+
+    private static ModelConfig defaultTargetModel() {
+        return new ModelConfig(
                 DEFAULT_MODEL_TYPE,
                 DEFAULT_ENGINE,
                 DEFAULT_MODEL_NAME,
                 DEFAULT_MODEL_PATH,
+                DEFAULT_BIN_PATH,
                 DEFAULT_LABEL_PATH,
+                DEFAULT_INPUT_SIZE,
+                DEFAULT_INPUT_SIZE,
+                DEFAULT_INPUT_SIZE,
                 DEFAULT_THRESHOLD,
                 DEFAULT_IOU_THRESHOLD,
-                DEFAULT_INPUT_SIZE,
-                DEFAULT_DETECT_INTERVAL,
-                DEFAULT_CALLBACK_INTERVAL,
+                0,
+                "",
+                "",
                 DEFAULT_USE_GPU
         );
-    }
-
-    private static String getString(JSONObject options, String key, String defaultValue) {
-        String value = options.getString(key);
-        if (value == null || value.trim().length() == 0) {
-            return defaultValue;
-        }
-        return value;
-    }
-
-    private static double getDouble(JSONObject options, String key, double defaultValue) {
-        Object value = options.get(key);
-        if (value instanceof Number) {
-            return ((Number) value).doubleValue();
-        }
-        if (value instanceof String) {
-            try {
-                return Double.parseDouble((String) value);
-            } catch (NumberFormatException ignored) {
-                return defaultValue;
-            }
-        }
-        return defaultValue;
-    }
-
-    private static int getInt(JSONObject options, String key, int defaultValue) {
-        Object value = options.get(key);
-        if (value instanceof Number) {
-            return ((Number) value).intValue();
-        }
-        if (value instanceof String) {
-            try {
-                return Integer.parseInt((String) value);
-            } catch (NumberFormatException ignored) {
-                return defaultValue;
-            }
-        }
-        return defaultValue;
-    }
-
-    private static boolean getBoolean(JSONObject options, String key, boolean defaultValue) {
-        Object value = options.get(key);
-        if (value instanceof Boolean) {
-            return (Boolean) value;
-        }
-        if (value instanceof Number) {
-            return ((Number) value).intValue() != 0;
-        }
-        if (value instanceof String) {
-            String text = ((String) value).trim();
-            if ("true".equalsIgnoreCase(text) || "1".equals(text)) {
-                return true;
-            }
-            if ("false".equalsIgnoreCase(text) || "0".equals(text)) {
-                return false;
-            }
-        }
-        return defaultValue;
     }
 
     static void invokeCallback(UniJSCallback uniCallback, JSONObject result, boolean keepAlive) {

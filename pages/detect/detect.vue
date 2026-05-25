@@ -97,15 +97,21 @@ export default {
       this.resetDetectState()
 
       const options = {
-        modelType: 'detection',
-        engine: 'ncnn',
-        modelName: 'yolov8n',
-        threshold: 0.5,
-        iouThreshold: 0.45,
+        pipelineMode: true,
         detectInterval: 200,
         callbackInterval: 500,
-        inputSize: 640,
-        useGpu: false
+        targetModel: {
+          modelType: 'detection',
+          engine: 'ncnn',
+          modelName: 'yolov8n',
+          modelPath: 'models/yolov8n_ncnn/yolov8n.param',
+          binPath: 'models/yolov8n_ncnn/yolov8n.bin',
+          labelPath: 'models/yolov8n_ncnn/labels.txt',
+          inputSize: 640,
+          threshold: 0.5,
+          iouThreshold: 0.45,
+          useGpu: false
+        }
       }
 
       this.status = '打开 DetectActivity 中'
@@ -126,15 +132,21 @@ export default {
       this.resetDetectState()
 
       const options = {
-        modelType: 'detection',
-        engine: 'ncnn',
-        modelName: 'yolov8n',
-        threshold: 0.5,
-        iouThreshold: 0.45,
+        pipelineMode: true,
         detectInterval: 500,
         callbackInterval: 500,
-        inputSize: 640,
-        useGpu: false
+        targetModel: {
+          modelType: 'detection',
+          engine: 'ncnn',
+          modelName: 'yolov8n',
+          modelPath: 'models/yolov8n_ncnn/yolov8n.param',
+          binPath: 'models/yolov8n_ncnn/yolov8n.bin',
+          labelPath: 'models/yolov8n_ncnn/labels.txt',
+          inputSize: 640,
+          threshold: 0.5,
+          iouThreshold: 0.45,
+          useGpu: false
+        }
       }
 
       this.status = '同步打开 DetectActivity 中'
@@ -201,7 +213,7 @@ export default {
         this.boxCount = boxes.length
         this.maxScore = boxes.reduce((max, box) => Math.max(max, Number(box.score) || 0), 0)
         this.lastResultAt = res.timestamp || Date.now()
-        this.status = this.hasTarget ? '检测到目标' : '未检测到目标'
+        this.status = res.message || (this.hasTarget ? '检测通过' : '未检测到目标')
         this.resultText = JSON.stringify(res, null, 2)
         return
       }
@@ -213,7 +225,7 @@ export default {
         this.boxes = boxes
         this.boxCount = boxes.length
         this.maxScore = boxes.reduce((max, box) => Math.max(max, Number(box.score) || 0), 0)
-        this.status = '拍照完成，检测页面已关闭'
+        this.status = res.message || '拍照完成，检测页面已关闭'
         this.resultText = JSON.stringify(res, null, 2)
         return
       }

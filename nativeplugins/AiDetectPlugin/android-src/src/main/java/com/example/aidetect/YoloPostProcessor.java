@@ -77,13 +77,7 @@ public final class YoloPostProcessor {
                     throwable
             );
         }
-        boolean hasTarget = false;
-        for (DetectionBox box : boxes) {
-            if ("target".equals(box.label) || "person".equals(box.label)) {
-                hasTarget = true;
-                break;
-            }
-        }
+        boolean hasTarget = !boxes.isEmpty();
 
         return new VisionResult(
                 true,

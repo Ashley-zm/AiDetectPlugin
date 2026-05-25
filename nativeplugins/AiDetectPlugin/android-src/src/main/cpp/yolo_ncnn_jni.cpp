@@ -29,13 +29,14 @@ struct NativeBox {
     float bottom;
 };
 
-constexpr int kInputSize = 640;
+struct NativeModel {
+    std::mutex mutex;
+    std::unique_ptr<ncnn::Net> net;
+    std::vector<std::string> labels;
+};
+
 constexpr int kValuesPerBox = 6;
 constexpr float kNativeScoreFloor = 0.001f;
-
-std::mutex g_mutex;
-std::unique_ptr<ncnn::Net> g_net;
-std::vector<std::string> g_labels;
 
 std::string jstring_to_string(JNIEnv *env, jstring value) {
     if (value == nullptr) {
@@ -52,8 +53,8 @@ std::string jstring_to_string(JNIEnv *env, jstring value) {
     return result;
 }
 
-bool load_labels(AAssetManager *mgr, const std::string &label_path) {
-    g_labels.clear();
+bool load_labels(AAssetManager *mgr, const std::string &label_path, std::vector<std::string> &labels) {
+    labels.clear();
 
     if (label_path.empty()) {
         LOGE("label path is empty");
@@ -87,30 +88,177 @@ bool load_labels(AAssetManager *mgr, const std::string &label_path) {
             line.pop_back();
         }
         if (!line.empty()) {
-            g_labels.push_back(line);
+            labels.push_back(line);
         }
     }
 
-    LOGI("labels loaded, count=%zu", g_labels.size());
-    return !g_labels.empty();
+    LOGI("labels loaded, count=%zu", labels.size());
+    return !labels.empty();
 }
 
-void release_net_locked() {
-    if (g_net) {
-        g_net->clear();
-        g_net.reset();
+NativeModel *handle_to_model(jlong handle) {
+    return reinterpret_cast<NativeModel *>(handle);
+}
+
+jlong load_model(
+        JNIEnv *env,
+        jobject asset_manager,
+        jstring param_path,
+        jstring bin_path,
+        jstring label_path,
+        jboolean use_gpu) {
+    AAssetManager *mgr = AAssetManager_fromJava(env, asset_manager);
+    const std::string param = jstring_to_string(env, param_path);
+    const std::string bin = jstring_to_string(env, bin_path);
+    const std::string label = jstring_to_string(env, label_path);
+
+    LOGI("loadModelNative called, mgr=%p, param=%s, bin=%s, label=%s, useGpu=%d",
+         mgr, param.c_str(), bin.c_str(), label.c_str(), use_gpu == JNI_TRUE);
+
+    if (mgr == nullptr || param.empty() || bin.empty()) {
+        LOGE("asset manager, param, or bin path is empty");
+        return 0;
     }
-    g_labels.clear();
+
+    std::unique_ptr<NativeModel> model(new NativeModel());
+    model->net.reset(new ncnn::Net());
+
+#if NCNN_VULKAN
+    const bool gpu_available = ncnn::get_gpu_count() > 0;
+    model->net->opt.use_vulkan_compute = use_gpu == JNI_TRUE && gpu_available;
+    if (use_gpu == JNI_TRUE && !gpu_available) {
+        LOGI("Vulkan requested but not available, falling back to CPU");
+    }
+#else
+    model->net->opt.use_vulkan_compute = false;
+    if (use_gpu == JNI_TRUE) {
+        LOGI("Vulkan requested but this ncnn build has no Vulkan support, using CPU");
+    }
+#endif
+
+    int ret = model->net->load_param(mgr, param.c_str());
+    if (ret != 0) {
+        LOGE("load_param failed, ret=%d, path=%s", ret, param.c_str());
+        return 0;
+    }
+
+    ret = model->net->load_model(mgr, bin.c_str());
+    if (ret != 0) {
+        LOGE("load_model failed, ret=%d, path=%s", ret, bin.c_str());
+        return 0;
+    }
+
+    if (!load_labels(mgr, label, model->labels)) {
+        LOGE("load labels failed, path=%s", label.c_str());
+        return 0;
+    }
+
+    LOGI("ncnn model loaded successfully");
+    return reinterpret_cast<jlong>(model.release());
+}
+
+void release_model(jlong handle) {
+    NativeModel *model = handle_to_model(handle);
+    if (model == nullptr) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(model->mutex);
+        if (model->net) {
+            model->net->clear();
+            model->net.reset();
+        }
+        model->labels.clear();
+    }
+    delete model;
+    LOGI("releaseNative called, ncnn net released");
 }
 
 float clamp_float(float value, float min_value, float max_value) {
     return std::max(min_value, std::min(max_value, value));
 }
 
+bool prepare_input(
+        JNIEnv *env,
+        jobject bitmap,
+        int input_width,
+        int input_height,
+        bool classification,
+        ncnn::Mat &input) {
+    if (bitmap == nullptr) {
+        LOGE("bitmap is null");
+        return false;
+    }
+
+    AndroidBitmapInfo bitmap_info;
+    if (AndroidBitmap_getInfo(env, bitmap, &bitmap_info) != ANDROID_BITMAP_RESULT_SUCCESS) {
+        LOGE("AndroidBitmap_getInfo failed");
+        return false;
+    }
+
+    if (bitmap_info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
+        LOGE("Unsupported bitmap format=%d, expected RGBA_8888", bitmap_info.format);
+        return false;
+    }
+
+    void *pixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) {
+        LOGE("AndroidBitmap_lockPixels failed");
+        return false;
+    }
+
+    input = ncnn::Mat::from_pixels_resize(
+            static_cast<const unsigned char *>(pixels),
+            ncnn::Mat::PIXEL_RGBA2RGB,
+            static_cast<int>(bitmap_info.width),
+            static_cast<int>(bitmap_info.height),
+            input_width,
+            input_height
+    );
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    if (classification) {
+        const float mean_values[3] = {123.675f, 116.28f, 103.53f};
+        const float norm_values[3] = {1.f / 58.395f, 1.f / 57.12f, 1.f / 57.375f};
+        input.substract_mean_normalize(mean_values, norm_values);
+    } else {
+        const float mean_values[3] = {0.f, 0.f, 0.f};
+        const float norm_values[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
+        input.substract_mean_normalize(mean_values, norm_values);
+    }
+    return true;
+}
+
+bool set_input(ncnn::Extractor &extractor, const ncnn::Mat &input) {
+    const char *input_names[] = {"images", "in0", "input", "data"};
+    for (const char *name : input_names) {
+        if (extractor.input(name, input) == 0) {
+            LOGI("ncnn input blob matched: %s", name);
+            return true;
+        }
+    }
+    LOGE("failed to set ncnn input");
+    return false;
+}
+
+bool extract_output(ncnn::Extractor &extractor, ncnn::Mat &output) {
+    const char *output_names[] = {"output0", "out0", "output", "prob"};
+    for (const char *name : output_names) {
+        if (extractor.extract(name, output) == 0) {
+            LOGI("ncnn output blob matched: %s dims=%d w=%d h=%d c=%d",
+                 name, output.dims, output.w, output.h, output.c);
+            return true;
+        }
+    }
+    LOGE("failed to extract ncnn output");
+    return false;
+}
+
 void append_yolo_box(
         std::vector<NativeBox> &boxes,
         int image_width,
         int image_height,
+        int input_size,
         float cx,
         float cy,
         float width,
@@ -121,18 +269,15 @@ void append_yolo_box(
         return;
     }
 
-    // Some exports emit normalized xywh, others emit input-pixel xywh.
-    // Current default assumes YOLOv8 NCNN xywh. If your model emits xyxy or
-    // another layout, update parse_yolov8_output below.
     if (std::max(std::max(cx, cy), std::max(width, height)) <= 2.f) {
-        cx *= kInputSize;
-        cy *= kInputSize;
-        width *= kInputSize;
-        height *= kInputSize;
+        cx *= input_size;
+        cy *= input_size;
+        width *= input_size;
+        height *= input_size;
     }
 
-    const float scale_x = static_cast<float>(image_width) / static_cast<float>(kInputSize);
-    const float scale_y = static_cast<float>(image_height) / static_cast<float>(kInputSize);
+    const float scale_x = static_cast<float>(image_width) / static_cast<float>(input_size);
+    const float scale_y = static_cast<float>(image_height) / static_cast<float>(input_size);
     float left = (cx - width * 0.5f) * scale_x;
     float top = (cy - height * 0.5f) * scale_y;
     float right = (cx + width * 0.5f) * scale_x;
@@ -152,13 +297,8 @@ void parse_yolov8_output(
         const ncnn::Mat &output,
         int image_width,
         int image_height,
+        int input_size,
         std::vector<NativeBox> &boxes) {
-    // YOLOv8 output parsing location.
-    // Current default assumes an Ultralytics-style YOLOv8 NCNN output:
-    //   [4 + num_classes, anchors] or [anchors, 4 + num_classes]
-    // with box fields [cx, cy, w, h] followed by class scores.
-    // TODO: If your exported model produces a different output blob shape
-    // or xyxy coordinates, update this parser and the output blob names below.
     if (output.dims != 2) {
         LOGE("YOLOv8 parser expected dims=2, got dims=%d w=%d h=%d c=%d",
              output.dims, output.w, output.h, output.c);
@@ -191,6 +331,7 @@ void parse_yolov8_output(
                     boxes,
                     image_width,
                     image_height,
+                    input_size,
                     output.row(0)[anchor],
                     output.row(1)[anchor],
                     output.row(2)[anchor],
@@ -222,6 +363,7 @@ void parse_yolov8_output(
                     boxes,
                     image_width,
                     image_height,
+                    input_size,
                     values[0],
                     values[1],
                     values[2],
@@ -231,23 +373,6 @@ void parse_yolov8_output(
             );
         }
     }
-}
-
-void parse_yolov5_output(
-        const ncnn::Mat &output,
-        int image_width,
-        int image_height,
-        std::vector<NativeBox> &boxes) {
-    (void) output;
-    (void) image_width;
-    (void) image_height;
-    (void) boxes;
-
-    // YOLOv5 output parsing location.
-    // TODO: Implement this if using YOLOv5 exports. Typical YOLOv5 layouts
-    // include objectness plus class scores, e.g. [anchors, 5 + num_classes].
-    // Final score should usually be objectness * class_score.
-    LOGI("YOLOv5 parser is not enabled; default parser is YOLOv8");
 }
 
 jfloatArray boxes_to_jfloat_array(JNIEnv *env, const std::vector<NativeBox> &boxes) {
@@ -271,9 +396,56 @@ jfloatArray boxes_to_jfloat_array(JNIEnv *env, const std::vector<NativeBox> &box
     return result;
 }
 
+jfloatArray classification_to_jfloat_array(JNIEnv *env, const ncnn::Mat &output, int top_k) {
+    const int count = static_cast<int>(output.total());
+    if (count <= 0 || output.data == nullptr) {
+        return nullptr;
+    }
+
+    const float *raw = static_cast<const float *>(output.data);
+    float max_score = raw[0];
+    for (int i = 1; i < count; i++) {
+        max_score = std::max(max_score, raw[i]);
+    }
+
+    std::vector<std::pair<int, float>> scores;
+    scores.reserve(static_cast<size_t>(count));
+    float sum = 0.f;
+    for (int i = 0; i < count; i++) {
+        const float value = std::exp(raw[i] - max_score);
+        scores.push_back(std::make_pair(i, value));
+        sum += value;
+    }
+    if (sum <= 0.f || std::isnan(sum) || std::isinf(sum)) {
+        return nullptr;
+    }
+
+    for (std::pair<int, float> &score : scores) {
+        score.second = score.second / sum;
+    }
+    std::sort(scores.begin(), scores.end(), [](const std::pair<int, float> &left, const std::pair<int, float> &right) {
+        return left.second > right.second;
+    });
+
+    const int safe_top_k = std::max(1, std::min(top_k, count));
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(safe_top_k * 2));
+    if (result == nullptr) {
+        return nullptr;
+    }
+
+    std::vector<jfloat> flat;
+    flat.reserve(static_cast<size_t>(safe_top_k * 2));
+    for (int i = 0; i < safe_top_k; i++) {
+        flat.push_back(static_cast<jfloat>(scores[i].first));
+        flat.push_back(static_cast<jfloat>(scores[i].second));
+    }
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
+    return result;
+}
+
 } // namespace
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jlong JNICALL
 Java_com_example_aidetect_YoloNcnnDetector_loadModelNative(
         JNIEnv *env,
         jobject thiz,
@@ -283,80 +455,24 @@ Java_com_example_aidetect_YoloNcnnDetector_loadModelNative(
         jstring label_path,
         jboolean use_gpu) {
     (void) thiz;
-
-    AAssetManager *mgr = AAssetManager_fromJava(env, asset_manager);
-    const std::string param = jstring_to_string(env, param_path);
-    const std::string bin = jstring_to_string(env, bin_path);
-    const std::string label = jstring_to_string(env, label_path);
-
-    LOGI("loadModelNative called, mgr=%p, param=%s, bin=%s, label=%s, useGpu=%d",
-         mgr, param.c_str(), bin.c_str(), label.c_str(), use_gpu == JNI_TRUE);
-
-    if (mgr == nullptr) {
-        LOGE("asset manager is null");
-        return JNI_FALSE;
-    }
-    if (param.empty() || bin.empty()) {
-        LOGE("param or bin path is empty");
-        return JNI_FALSE;
-    }
-
-    std::lock_guard<std::mutex> lock(g_mutex);
-    release_net_locked();
-
-    std::unique_ptr<ncnn::Net> net(new ncnn::Net());
-
-#if NCNN_VULKAN
-    const bool gpu_available = ncnn::get_gpu_count() > 0;
-    net->opt.use_vulkan_compute = use_gpu == JNI_TRUE && gpu_available;
-    if (use_gpu == JNI_TRUE && !gpu_available) {
-        LOGI("Vulkan requested but not available, falling back to CPU");
-    }
-#else
-    net->opt.use_vulkan_compute = false;
-    if (use_gpu == JNI_TRUE) {
-        LOGI("Vulkan requested but this ncnn build has no Vulkan support, using CPU");
-    }
-#endif
-
-    int ret = net->load_param(mgr, param.c_str());
-    if (ret != 0) {
-        LOGE("load_param failed, ret=%d, path=%s", ret, param.c_str());
-        return JNI_FALSE;
-    }
-
-    ret = net->load_model(mgr, bin.c_str());
-    if (ret != 0) {
-        LOGE("load_model failed, ret=%d, path=%s", ret, bin.c_str());
-        return JNI_FALSE;
-    }
-
-    if (!load_labels(mgr, label)) {
-        LOGE("load labels failed, path=%s", label.c_str());
-        return JNI_FALSE;
-    }
-
-    g_net = std::move(net);
-    LOGI("ncnn model loaded successfully");
-
-    return JNI_TRUE;
+    return load_model(env, asset_manager, param_path, bin_path, label_path, use_gpu);
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_example_aidetect_YoloNcnnDetector_inferNative(
         JNIEnv *env,
         jobject thiz,
-        jobject bitmap) {
+        jlong native_handle,
+        jobject bitmap,
+        jint input_size) {
     (void) thiz;
-
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_net) {
-        LOGE("inferNative called before model loaded");
+    NativeModel *model = handle_to_model(native_handle);
+    if (model == nullptr || !model->net) {
+        LOGE("Yolo inferNative called before model loaded");
         return nullptr;
     }
-
     if (bitmap == nullptr) {
-        LOGE("inferNative bitmap is null");
+        LOGE("Yolo inferNative bitmap is null");
         return nullptr;
     }
 
@@ -366,81 +482,32 @@ Java_com_example_aidetect_YoloNcnnDetector_inferNative(
         return nullptr;
     }
 
-    if (bitmap_info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
-        LOGE("Unsupported bitmap format=%d, expected RGBA_8888", bitmap_info.format);
+    std::lock_guard<std::mutex> lock(model->mutex);
+    ncnn::Mat input;
+    const int safe_input_size = std::max(1, static_cast<int>(input_size));
+    if (!prepare_input(env, bitmap, safe_input_size, safe_input_size, false, input)) {
         return nullptr;
     }
 
-    void *pixels = nullptr;
-    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) {
-        LOGE("AndroidBitmap_lockPixels failed");
-        return nullptr;
-    }
-
-    ncnn::Mat input = ncnn::Mat::from_pixels_resize(
-            static_cast<const unsigned char *>(pixels),
-            ncnn::Mat::PIXEL_RGBA2RGB,
-            static_cast<int>(bitmap_info.width),
-            static_cast<int>(bitmap_info.height),
-            kInputSize,
-            kInputSize
-    );
-    AndroidBitmap_unlockPixels(env, bitmap);
-
-    const float mean_values[3] = {0.f, 0.f, 0.f};
-    const float norm_values[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
-    input.substract_mean_normalize(mean_values, norm_values);
-
-    ncnn::Extractor extractor = g_net->create_extractor();
+    ncnn::Extractor extractor = model->net->create_extractor();
     extractor.set_light_mode(true);
-
-    // TODO: If the actual NCNN model uses a different input blob name,
-    // update this list. Common YOLOv8 exports use "images" or "in0".
-    const char *input_names[] = {"images", "in0", "input", "data"};
-    int input_ret = -1;
-    for (const char *name : input_names) {
-        input_ret = extractor.input(name, input);
-        if (input_ret == 0) {
-            LOGI("ncnn input blob matched: %s", name);
-            break;
-        }
-    }
-    if (input_ret != 0) {
-        LOGE("failed to set ncnn input. TODO: check input blob name in param file");
+    if (!set_input(extractor, input)) {
         return nullptr;
     }
 
     ncnn::Mat output;
-    // TODO: If the actual NCNN model uses a different output blob name,
-    // update this list. Current default is YOLOv8 output parsing.
-    const char *output_names[] = {"output0", "out0", "output", "prob"};
-    int output_ret = -1;
-    const char *matched_output_name = nullptr;
-    for (const char *name : output_names) {
-        output_ret = extractor.extract(name, output);
-        if (output_ret == 0) {
-            matched_output_name = name;
-            break;
-        }
-    }
-    if (output_ret != 0) {
-        LOGE("failed to extract ncnn output. TODO: check output blob name in param file");
+    if (!extract_output(extractor, output)) {
         return nullptr;
     }
-
-    LOGI("ncnn output blob matched: %s dims=%d w=%d h=%d c=%d",
-         matched_output_name, output.dims, output.w, output.h, output.c);
 
     std::vector<NativeBox> boxes;
     parse_yolov8_output(
             output,
             static_cast<int>(bitmap_info.width),
             static_cast<int>(bitmap_info.height),
+            safe_input_size,
             boxes
     );
-
-    // YOLOv5 hook kept explicit for future model swaps.
-    // parse_yolov5_output(output, bitmap_info.width, bitmap_info.height, boxes);
 
     return boxes_to_jfloat_array(env, boxes);
 }
@@ -448,11 +515,74 @@ Java_com_example_aidetect_YoloNcnnDetector_inferNative(
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_aidetect_YoloNcnnDetector_releaseNative(
         JNIEnv *env,
-        jobject thiz) {
+        jobject thiz,
+        jlong native_handle) {
     (void) env;
     (void) thiz;
+    release_model(native_handle);
+}
 
-    std::lock_guard<std::mutex> lock(g_mutex);
-    release_net_locked();
-    LOGI("releaseNative called, ncnn net released");
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_example_aidetect_ResNetNcnnClassifier_loadModelNative(
+        JNIEnv *env,
+        jobject thiz,
+        jobject asset_manager,
+        jstring param_path,
+        jstring bin_path,
+        jstring label_path,
+        jboolean use_gpu) {
+    (void) thiz;
+    return load_model(env, asset_manager, param_path, bin_path, label_path, use_gpu);
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_example_aidetect_ResNetNcnnClassifier_inferNative(
+        JNIEnv *env,
+        jobject thiz,
+        jlong native_handle,
+        jobject bitmap,
+        jint input_width,
+        jint input_height,
+        jint top_k) {
+    (void) thiz;
+    NativeModel *model = handle_to_model(native_handle);
+    if (model == nullptr || !model->net) {
+        LOGE("Classifier inferNative called before model loaded");
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex> lock(model->mutex);
+    ncnn::Mat input;
+    if (!prepare_input(
+            env,
+            bitmap,
+            std::max(1, static_cast<int>(input_width)),
+            std::max(1, static_cast<int>(input_height)),
+            true,
+            input)) {
+        return nullptr;
+    }
+
+    ncnn::Extractor extractor = model->net->create_extractor();
+    extractor.set_light_mode(true);
+    if (!set_input(extractor, input)) {
+        return nullptr;
+    }
+
+    ncnn::Mat output;
+    if (!extract_output(extractor, output)) {
+        return nullptr;
+    }
+
+    return classification_to_jfloat_array(env, output, std::max(1, static_cast<int>(top_k)));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_aidetect_ResNetNcnnClassifier_releaseNative(
+        JNIEnv *env,
+        jobject thiz,
+        jlong native_handle) {
+    (void) env;
+    (void) thiz;
+    release_model(native_handle);
 }

@@ -62,11 +62,13 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private PreviewView cameraPreview;
     private DetectOverlayView overlayView;
     private TextView statusText;
+    private TextView statusTipView;
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
     private ImageCapture imageCapture;
     private VisionModel visionModel;
+    private VisionPipeline visionPipeline;
     private DetectConfig modelConfig;
     private long lastAnalyzeTimeMs = 0L;
     private int analyzedFrameCount = 0;
@@ -189,6 +191,20 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+
+        statusTipView = new TextView(this);
+        statusTipView.setTextColor(0xFFFFFFFF);
+        statusTipView.setTextSize(18);
+        statusTipView.setGravity(Gravity.CENTER);
+        statusTipView.setPadding(dp(16), dp(10), dp(16), dp(10));
+        statusTipView.setBackgroundColor(0xAA111827);
+        FrameLayout.LayoutParams tipParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+        );
+        tipParams.setMargins(dp(16), dp(24), dp(16), 0);
+        root.addView(statusTipView, tipParams);
 
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -336,13 +352,20 @@ public class DetectActivity extends Activity implements LifecycleOwner {
 
         try {
             modelConfig = DetectConfig.snapshot();
+            modelConfig.validateForStart();
             synchronized (modelLock) {
-                visionModel = ModelFactory.create(modelConfig);
-                visionModel.init(this, modelConfig);
+                if (modelConfig.pipelineMode) {
+                    visionPipeline = new VisionPipeline();
+                    visionPipeline.init(this, modelConfig);
+                } else {
+                    visionModel = ModelFactory.create(modelConfig);
+                    visionModel.init(this, modelConfig);
+                }
             }
             Log.e(TAG, "VisionModel initialized, modelType=" + modelConfig.modelType
                     + ", engine=" + modelConfig.engine
-                    + ", modelName=" + modelConfig.modelName);
+                    + ", modelName=" + modelConfig.modelName
+                    + ", pipelineMode=" + modelConfig.pipelineMode);
             return true;
         } catch (Throwable throwable) {
             Log.e(TAG, "VisionModel init failed", throwable);
@@ -391,33 +414,52 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             lastAnalyzeTimeMs = nowMs;
 
             Bitmap bitmap = null;
-            VisionResult visionResult;
             try {
                 bitmap = bitmapConverter.toBitmap(imageProxy);
-                VisionResult rawResult;
                 synchronized (modelLock) {
-                    if (released || visionModel == null) {
-                        Log.e(TAG, "VisionModel is null, skip inference");
-                        DetectCallbackManager.notifyError(DetectErrorCode.MODEL_LOAD_FAILED, "VisionModel is null");
+                    if (released) {
                         return;
                     }
-                    rawResult = visionModel.infer(bitmap);
+                    if (modelConfig != null && modelConfig.pipelineMode) {
+                        if (visionPipeline == null) {
+                            Log.e(TAG, "VisionPipeline is null, skip inference");
+                            DetectCallbackManager.notifyError(DetectErrorCode.PIPELINE_INFER_FAILED, "VisionPipeline is null");
+                            return;
+                        }
+                        PipelineResult pipelineResult = visionPipeline.infer(bitmap, "realtime_frame");
+                        PipelineResult mappedResult = mapPipelineResultToOverlay(
+                                pipelineResult,
+                                bitmap.getWidth(),
+                                bitmap.getHeight()
+                        );
+                        int frameCount = ++analyzedFrameCount;
+                        Log.i(TAG, "Pipeline analyzed"
+                                + ", analyzedFrameCount=" + frameCount
+                                + ", status=" + mappedResult.pipelineStatus
+                                + ", hasTarget=" + mappedResult.hasTarget);
+                        mainHandler.post(() -> updatePipelineResult(frameCount, mappedResult));
+                    } else {
+                        if (visionModel == null) {
+                            Log.e(TAG, "VisionModel is null, skip inference");
+                            DetectCallbackManager.notifyError(DetectErrorCode.MODEL_LOAD_FAILED, "VisionModel is null");
+                            return;
+                        }
+                        VisionResult rawResult = visionModel.infer(bitmap);
+                        VisionResult visionResult = mapResultToOverlay(rawResult, bitmap.getWidth(), bitmap.getHeight());
+                        int frameCount = ++analyzedFrameCount;
+                        Log.i(TAG, "YOLO analyzed"
+                                + ", analyzedFrameCount=" + frameCount
+                                + ", detectIntervalMs=" + detectIntervalMs
+                                + ", boxes=" + visionResult.boxes.size()
+                                + ", hasTarget=" + visionResult.hasTarget);
+                        mainHandler.post(() -> updateVisionResult(frameCount, visionResult));
+                    }
                 }
-                visionResult = mapResultToOverlay(rawResult, bitmap.getWidth(), bitmap.getHeight());
             } finally {
                 if (bitmap != null && !bitmap.isRecycled()) {
                     bitmap.recycle();
                 }
             }
-
-            int frameCount = ++analyzedFrameCount;
-            Log.i(TAG, "YOLO analyzed"
-                    + ", analyzedFrameCount=" + frameCount
-                    + ", detectIntervalMs=" + detectIntervalMs
-                    + ", boxes=" + visionResult.boxes.size()
-                    + ", hasTarget=" + visionResult.hasTarget);
-
-            mainHandler.post(() -> updateVisionResult(frameCount, visionResult));
         } catch (Throwable throwable) {
             Log.e(TAG, "VisionModel infer failed", throwable);
             DetectCallbackManager.notifyError(throwable, DetectErrorCode.NCNN_INFER_FAILED);
@@ -429,6 +471,9 @@ public class DetectActivity extends Activity implements LifecycleOwner {
 
     private void updateStatus(String status) {
         currentStatus = status;
+        if (statusTipView != null) {
+            statusTipView.setText(status);
+        }
         refreshStatusText();
     }
 
@@ -447,6 +492,33 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         }
 
         DetectCallbackManager.notifyVisionResult(visionResult);
+        refreshStatusText();
+    }
+
+    private void updatePipelineResult(int frameCount, @NonNull PipelineResult pipelineResult) {
+        analyzedFrameCount = frameCount;
+        hasTarget = pipelineResult.hasTarget;
+        VisionResult detectionResult = pipelineResult.detectionResult;
+        detectionBoxCount = detectionResult == null ? 0 : detectionResult.boxes.size();
+        maxScore = 0F;
+
+        if (detectionResult != null) {
+            for (DetectionBox box : detectionResult.boxes) {
+                maxScore = Math.max(maxScore, box.score);
+            }
+        }
+
+        boolean shouldDrawBoxes = PipelineStatus.TARGET_FOUND.name().equals(pipelineResult.pipelineStatus)
+                && detectionResult != null;
+        if (overlayView != null) {
+            overlayView.setResults(shouldDrawBoxes ? detectionResult.boxes : null);
+        }
+
+        currentStatus = pipelineResult.message;
+        if (statusTipView != null) {
+            statusTipView.setText(pipelineResult.message);
+        }
+        DetectCallbackManager.notifyPipelineResult(pipelineResult);
         refreshStatusText();
     }
 
@@ -471,6 +543,27 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         );
     }
 
+    private PipelineResult mapPipelineResultToOverlay(@NonNull PipelineResult rawResult, int bitmapWidth, int bitmapHeight) throws DetectException {
+        VisionResult detectionResult = rawResult.detectionResult;
+        VisionResult mappedDetectionResult = detectionResult;
+        if (detectionResult != null) {
+            mappedDetectionResult = mapResultToOverlay(detectionResult, bitmapWidth, bitmapHeight);
+        }
+        return new PipelineResult(
+                rawResult.success,
+                rawResult.pipelineStatus,
+                rawResult.message,
+                rawResult.hasTarget,
+                rawResult.fuzzyResult,
+                rawResult.remakeResult,
+                mappedDetectionResult,
+                rawResult.targetModelName,
+                rawResult.resultSource,
+                rawResult.timestamp,
+                rawResult.errorCode
+        );
+    }
+
     private void refreshStatusText() {
         if (statusText != null) {
             statusText.setText(String.format(
@@ -481,6 +574,9 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                     detectionBoxCount,
                     maxScore
             ));
+        }
+        if (statusTipView != null && (statusTipView.getText() == null || statusTipView.getText().length() == 0)) {
+            statusTipView.setText(currentStatus);
         }
     }
 
@@ -620,8 +716,14 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void handlePhotoSaved(@NonNull File photoFile) {
         String imagePath = photoFile.getAbsolutePath();
         try {
-            VisionResult visionResult = inferSnapshotImage(imagePath);
-            JSONObject result = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis());
+            JSONObject result;
+            if (modelConfig != null && modelConfig.pipelineMode) {
+                PipelineResult pipelineResult = inferSnapshotPipeline(imagePath);
+                result = JsonUtils.pipelineSnapshotResult(imagePath, pipelineResult);
+            } else {
+                VisionResult visionResult = inferSnapshotImage(imagePath);
+                result = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis());
+            }
             isTakingPhoto.set(false);
             notifySnapshotAndMaybeFinish(result, true);
         } catch (Throwable throwable) {
@@ -636,6 +738,36 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                     ),
                     true
             );
+        }
+    }
+
+    private PipelineResult inferSnapshotPipeline(String imagePath) throws DetectException {
+        Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+        if (bitmap == null) {
+            throw new DetectException(
+                    DetectErrorCode.SNAPSHOT_IMAGE_DECODE_FAILED,
+                    "拍照图片解码失败：" + imagePath
+            );
+        }
+
+        try {
+            synchronized (modelLock) {
+                if (visionPipeline == null) {
+                    throw new DetectException(
+                            DetectErrorCode.SNAPSHOT_INFER_FAILED,
+                            "Pipeline 已释放，无法执行拍照图片推理"
+                    );
+                }
+                return mapPipelineResultToOverlay(
+                        visionPipeline.infer(bitmap, "snapshot_image"),
+                        bitmap.getWidth(),
+                        bitmap.getHeight()
+                );
+            }
+        } finally {
+            if (!bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
         }
     }
 
@@ -758,6 +890,14 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                     Log.e(TAG, "VisionModel release failed", throwable);
                 }
                 visionModel = null;
+            }
+            if (visionPipeline != null) {
+                try {
+                    visionPipeline.release();
+                } catch (Throwable throwable) {
+                    Log.e(TAG, "VisionPipeline release failed", throwable);
+                }
+                visionPipeline = null;
             }
             modelConfig = null;
         }

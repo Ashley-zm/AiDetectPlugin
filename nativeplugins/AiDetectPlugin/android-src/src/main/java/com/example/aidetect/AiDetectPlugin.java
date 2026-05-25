@@ -39,6 +39,7 @@ public class AiDetectPlugin extends UniModule {
         Log.i(TAG, "startDetect called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
+            DetectConfig.snapshot().validateForStart();
             DetectCallbackManager.setCallback(callback);
 
             Context context = getContext();
@@ -74,6 +75,7 @@ public class AiDetectPlugin extends UniModule {
         Log.i(TAG, "startDetectSync called, options=" + String.valueOf(options));
         try {
             DetectConfig.save(options);
+            DetectConfig.snapshot().validateForStart();
             DetectCallbackManager.clearCallback();
 
             Context context = getContext();
