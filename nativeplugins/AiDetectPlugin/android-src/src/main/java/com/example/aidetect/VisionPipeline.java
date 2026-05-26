@@ -76,7 +76,7 @@ public class VisionPipeline {
         VisionResult remakeResult = null;
         try {
             fuzzyResult = fuzzyModel.infer(bitmap);
-            if ("fuzzy".equals(fuzzyResult.label)) {
+            if (fuzzyResult.result) {
                 return PipelineResult.success(
                         PipelineStatus.FUZZY,
                         PipelineStatus.FUZZY.message,
@@ -88,7 +88,7 @@ public class VisionPipeline {
                         resultSource
                 );
             }
-            if (!DefaultQualityModelConfig.PASS_LABEL.equals(fuzzyResult.label)) {
+            if (!fuzzyResult.isPass) {
                 return PipelineResult.error(
                         DetectErrorCode.QUALITY_LABEL_UNKNOWN,
                         "模糊模型返回未知标签：" + fuzzyResult.label,
@@ -100,7 +100,7 @@ public class VisionPipeline {
             }
 
             remakeResult = remakeModel.infer(bitmap);
-            if ("remake".equals(remakeResult.label)) {
+            if (remakeResult.result) {
                 return PipelineResult.success(
                         PipelineStatus.REMAKE,
                         PipelineStatus.REMAKE.message,
@@ -112,7 +112,7 @@ public class VisionPipeline {
                         resultSource
                 );
             }
-            if (!DefaultQualityModelConfig.PASS_LABEL.equals(remakeResult.label)) {
+            if (!remakeResult.isPass) {
                 return PipelineResult.error(
                         DetectErrorCode.QUALITY_LABEL_UNKNOWN,
                         "翻拍模型返回未知标签：" + remakeResult.label,

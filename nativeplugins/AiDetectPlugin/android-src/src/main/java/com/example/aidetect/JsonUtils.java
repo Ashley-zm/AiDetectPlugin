@@ -50,6 +50,7 @@ public final class JsonUtils {
         result.put("modelName", visionResult.modelName);
         result.put("classId", visionResult.classId);
         result.put("label", visionResult.label);
+        result.put("businessLabel", businessLabelOf(visionResult.modelName, visionResult.classId, visionResult.label));
         result.put("score", visionResult.score);
         result.put("positiveLabel", visionResult.positiveLabel);
         result.put("passLabel", visionResult.passLabel);
@@ -61,6 +62,7 @@ public final class JsonUtils {
             JSONObject item = new JSONObject();
             item.put("classId", score.classId);
             item.put("label", score.label);
+            item.put("businessLabel", businessLabelOf(visionResult.modelName, score.classId, score.label));
             item.put("score", score.score);
             topK.add(item);
         }
@@ -124,6 +126,28 @@ public final class JsonUtils {
             result.put("boxes", new JSONArray());
         }
         return result;
+    }
+
+    private static String businessLabelOf(String modelName, int classId, String label) {
+        if (DefaultQualityModelConfig.FUZZY_MODEL_NAME.equals(modelName)) {
+            if (classId == 0 || "0".equals(label)) {
+                return "fuzzy";
+            }
+            if (classId == 1 || "1".equals(label)) {
+                return "hegui";
+            }
+            return label;
+        }
+        if (DefaultQualityModelConfig.REMAKE_MODEL_NAME.equals(modelName)) {
+            if (classId == 0 || "0".equals(label)) {
+                return "hegui";
+            }
+            if (classId == 1 || "1".equals(label)) {
+                return "remake";
+            }
+            return label;
+        }
+        return label;
     }
 
     public static JSONObject snapshotError(String code, String message, String imagePath, boolean shouldCloseCamera) {

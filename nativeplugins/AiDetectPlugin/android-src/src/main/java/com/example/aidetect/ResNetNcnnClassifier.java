@@ -47,14 +47,14 @@ public class ResNetNcnnClassifier implements VisionModel {
         if (nativeLibraryLoadError != null) {
             throw new DetectException(
                     loadErrorCode,
-                    "NCNN native 库加载失败：" + nativeLibraryLoadError.getMessage(),
+                    "NCNN native lib load failed: " + nativeLibraryLoadError.getMessage(),
                     nativeLibraryLoadError
             );
         }
 
         this.config = detectConfig.targetModelConfig;
         if (config == null) {
-            throw new DetectException(loadErrorCode, "分类模型配置为空");
+            throw new DetectException(loadErrorCode, "Classification model config is empty");
         }
 
         String paramPath;
@@ -70,7 +70,7 @@ public class ResNetNcnnClassifier implements VisionModel {
         try {
             labels = LabelUtils.loadLabels(context, config.labelPath);
         } catch (Throwable throwable) {
-            throw new DetectException(loadErrorCode, "分类标签文件加载失败：" + config.labelPath, throwable);
+            throw new DetectException(loadErrorCode, "Classification labels load failed: " + config.labelPath, throwable);
         }
         validateLabels();
 
@@ -82,7 +82,7 @@ public class ResNetNcnnClassifier implements VisionModel {
                 config.useGpu
         );
         if (nativeHandle == 0L) {
-            throw new DetectException(loadErrorCode, "NCNN 分类模型加载失败：loadModelNative returned 0");
+            throw new DetectException(loadErrorCode, "NCNN classification model load failed: loadModelNative returned 0");
         }
     }
 
@@ -102,17 +102,17 @@ public class ResNetNcnnClassifier implements VisionModel {
                     Math.max(1, config.topK)
             );
         } catch (Throwable throwable) {
-            throw new DetectException(inferErrorCode, "NCNN 分类推理失败：" + throwable.getMessage(), throwable);
+            throw new DetectException(inferErrorCode, "NCNN classification infer failed: " + throwable.getMessage(), throwable);
         }
 
         if (nativeScores == null || nativeScores.length < 2) {
-            throw new DetectException(inferErrorCode, "NCNN 分类输出为空");
+            throw new DetectException(inferErrorCode, "NCNN classification output is empty");
         }
 
         List<ClassificationScore> topK = parseTopK(nativeScores);
         ClassificationScore best = topK.get(0);
-        boolean result = config.positiveLabel.equals(best.label);
-        boolean isPass = config.passLabel.equals(best.label);
+        boolean result = isPositiveResult(best);
+        boolean isPass = isPassResult(best);
         return new VisionResult(
                 true,
                 config.modelType,
@@ -142,13 +142,25 @@ public class ResNetNcnnClassifier implements VisionModel {
 
     private void validateLabels() throws DetectException {
         if (labels == null || labels.isEmpty()) {
-            throw invalidLabels("labels.txt 为空");
+            throw invalidLabels("labels.txt is empty");
         }
-        if (!labels.containsValue(config.positiveLabel)) {
-            throw invalidLabels("labels.txt 缺少不合格标签：" + config.positiveLabel);
+        if (isQualityModel()) {
+            validateNumericQualityLabels();
+            return;
         }
-        if (!labels.containsValue(config.passLabel)) {
-            throw invalidLabels("labels.txt 缺少合格标签：" + config.passLabel);
+        if (config.positiveLabel.length() > 0 && !labels.containsValue(config.positiveLabel)) {
+            throw invalidLabels("labels.txt missing positive label: " + config.positiveLabel);
+        }
+        if (config.passLabel.length() > 0 && !labels.containsValue(config.passLabel)) {
+            throw invalidLabels("labels.txt missing pass label: " + config.passLabel);
+        }
+    }
+
+    private void validateNumericQualityLabels() throws DetectException {
+        String label0 = labels.get(0);
+        String label1 = labels.get(1);
+        if (!"0".equals(label0) || !"1".equals(label1)) {
+            throw invalidLabels("Quality classification labels.txt must contain exactly: 0, 1");
         }
     }
 
@@ -159,18 +171,49 @@ public class ResNetNcnnClassifier implements VisionModel {
         return new DetectException(code, message);
     }
 
+    private boolean isPositiveResult(ClassificationScore score) {
+        if (score == null) {
+            return false;
+        }
+        if (DefaultQualityModelConfig.FUZZY_MODEL_NAME.equals(config.modelName)) {
+            return score.classId == 0 || "0".equals(score.label);
+        }
+        if (DefaultQualityModelConfig.REMAKE_MODEL_NAME.equals(config.modelName)) {
+            return score.classId == 1 || "1".equals(score.label);
+        }
+        return config.positiveLabel.equals(score.label);
+    }
+
+    private boolean isPassResult(ClassificationScore score) {
+        if (score == null) {
+            return false;
+        }
+        if (DefaultQualityModelConfig.FUZZY_MODEL_NAME.equals(config.modelName)) {
+            return score.classId == 1 || "1".equals(score.label);
+        }
+        if (DefaultQualityModelConfig.REMAKE_MODEL_NAME.equals(config.modelName)) {
+            return score.classId == 0 || "0".equals(score.label);
+        }
+        return config.passLabel.equals(score.label);
+    }
+
+    private boolean isQualityModel() {
+        return DefaultQualityModelConfig.FUZZY_MODEL_NAME.equals(config.modelName)
+                || DefaultQualityModelConfig.REMAKE_MODEL_NAME.equals(config.modelName);
+    }
+
     private List<ClassificationScore> parseTopK(float[] nativeScores) throws DetectException {
         List<ClassificationScore> scores = new ArrayList<>();
         for (int index = 0; index + 1 < nativeScores.length; index += 2) {
             int classId = Math.round(nativeScores[index]);
             String label = labels.get(classId);
             if (label == null || label.trim().length() == 0) {
-                label = "class_" + classId;
+                label = String.valueOf(classId);
             }
             scores.add(new ClassificationScore(classId, label, nativeScores[index + 1]));
         }
         if (scores.isEmpty()) {
-            throw new DetectException(inferErrorCode, "NCNN 分类输出解析为空");
+            throw new DetectException(inferErrorCode, "NCNN classification output parse result is empty");
         }
         Collections.sort(scores, new Comparator<ClassificationScore>() {
             @Override
