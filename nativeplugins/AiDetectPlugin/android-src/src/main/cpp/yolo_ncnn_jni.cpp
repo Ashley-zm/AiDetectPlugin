@@ -397,6 +397,7 @@ jfloatArray boxes_to_jfloat_array(JNIEnv *env, const std::vector<NativeBox> &box
 }
 
 jfloatArray classification_to_jfloat_array(JNIEnv *env, const ncnn::Mat &output, int top_k) {
+    (void) top_k;
     const int count = static_cast<int>(output.total());
     if (count <= 0 || output.data == nullptr) {
         return nullptr;
@@ -408,38 +409,27 @@ jfloatArray classification_to_jfloat_array(JNIEnv *env, const ncnn::Mat &output,
         max_score = std::max(max_score, raw[i]);
     }
 
-    std::vector<std::pair<int, float>> scores;
+    std::vector<jfloat> scores;
     scores.reserve(static_cast<size_t>(count));
     float sum = 0.f;
     for (int i = 0; i < count; i++) {
         const float value = std::exp(raw[i] - max_score);
-        scores.push_back(std::make_pair(i, value));
+        scores.push_back(static_cast<jfloat>(value));
         sum += value;
     }
     if (sum <= 0.f || std::isnan(sum) || std::isinf(sum)) {
         return nullptr;
     }
 
-    for (std::pair<int, float> &score : scores) {
-        score.second = score.second / sum;
+    for (jfloat &score : scores) {
+        score = static_cast<jfloat>(score / sum);
     }
-    std::sort(scores.begin(), scores.end(), [](const std::pair<int, float> &left, const std::pair<int, float> &right) {
-        return left.second > right.second;
-    });
 
-    const int safe_top_k = std::max(1, std::min(top_k, count));
-    jfloatArray result = env->NewFloatArray(static_cast<jsize>(safe_top_k * 2));
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(scores.size()));
     if (result == nullptr) {
         return nullptr;
     }
-
-    std::vector<jfloat> flat;
-    flat.reserve(static_cast<size_t>(safe_top_k * 2));
-    for (int i = 0; i < safe_top_k; i++) {
-        flat.push_back(static_cast<jfloat>(scores[i].first));
-        flat.push_back(static_cast<jfloat>(scores[i].second));
-    }
-    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(flat.size()), flat.data());
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(scores.size()), scores.data());
     return result;
 }
 

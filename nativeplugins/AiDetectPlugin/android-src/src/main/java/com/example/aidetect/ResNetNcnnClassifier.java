@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.util.Log;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -113,6 +114,13 @@ public class ResNetNcnnClassifier implements VisionModel {
         ClassificationScore best = topK.get(0);
         boolean result = isPositiveResult(best);
         boolean isPass = isPassResult(best);
+        Log.i(TAG, "Classification parsed"
+                + ", modelName=" + config.modelName
+                + ", rawLength=" + nativeScores.length
+                + ", bestClassId=" + best.classId
+                + ", label=" + best.label
+                + ", result=" + result
+                + ", isPass=" + isPass);
         return new VisionResult(
                 true,
                 config.modelType,
@@ -203,6 +211,9 @@ public class ResNetNcnnClassifier implements VisionModel {
     }
 
     private List<ClassificationScore> parseTopK(float[] nativeScores) throws DetectException {
+        if (isQualityModel()) {
+            return parseQualityTopK(nativeScores);
+        }
         if (labels != null && nativeScores.length == labels.size()) {
             return parseRawClassScores(nativeScores);
         }
@@ -221,6 +232,49 @@ public class ResNetNcnnClassifier implements VisionModel {
         }
         if (scores.isEmpty()) {
             throw new DetectException(inferErrorCode, "NCNN classification output parse result is empty");
+        }
+        Collections.sort(scores, new Comparator<ClassificationScore>() {
+            @Override
+            public int compare(ClassificationScore left, ClassificationScore right) {
+                return Float.compare(right.score, left.score);
+            }
+        });
+        int topK = Math.min(Math.max(1, config.topK), scores.size());
+        return new ArrayList<>(scores.subList(0, topK));
+    }
+
+    private List<ClassificationScore> parseQualityTopK(float[] nativeScores) throws DetectException {
+        if (labels != null && nativeScores.length == labels.size()) {
+            return parseRawClassScores(nativeScores);
+        }
+        if (looksLikeClassScorePairs(nativeScores)) {
+            List<ClassificationScore> pairedScores = parseClassScorePairs(nativeScores);
+            for (ClassificationScore score : pairedScores) {
+                if (score.classId < 0 || score.classId > 1) {
+                    throw new DetectException(inferErrorCode, "Quality classification classId out of range: " + score.classId);
+                }
+            }
+            return pairedScores;
+        }
+
+        if (nativeScores.length < 2) {
+            throw new DetectException(inferErrorCode, "Quality classification output length invalid: " + nativeScores.length);
+        }
+        return parseRawClassScores(Arrays.copyOf(nativeScores, 2));
+    }
+
+    private List<ClassificationScore> parseClassScorePairs(float[] nativeScores) throws DetectException {
+        List<ClassificationScore> scores = new ArrayList<>();
+        for (int index = 0; index + 1 < nativeScores.length; index += 2) {
+            int classId = Math.round(nativeScores[index]);
+            String label = labels.get(classId);
+            if (label == null || label.trim().length() == 0) {
+                label = String.valueOf(classId);
+            }
+            scores.add(new ClassificationScore(classId, label, nativeScores[index + 1]));
+        }
+        if (scores.isEmpty()) {
+            throw new DetectException(inferErrorCode, "NCNN classification pair output parse result is empty");
         }
         Collections.sort(scores, new Comparator<ClassificationScore>() {
             @Override
