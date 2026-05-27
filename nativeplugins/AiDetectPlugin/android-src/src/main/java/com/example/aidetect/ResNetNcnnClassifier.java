@@ -203,6 +203,13 @@ public class ResNetNcnnClassifier implements VisionModel {
     }
 
     private List<ClassificationScore> parseTopK(float[] nativeScores) throws DetectException {
+        if (labels != null && nativeScores.length == labels.size()) {
+            return parseRawClassScores(nativeScores);
+        }
+        if (!looksLikeClassScorePairs(nativeScores)) {
+            return parseRawClassScores(nativeScores);
+        }
+
         List<ClassificationScore> scores = new ArrayList<>();
         for (int index = 0; index + 1 < nativeScores.length; index += 2) {
             int classId = Math.round(nativeScores[index]);
@@ -223,6 +230,84 @@ public class ResNetNcnnClassifier implements VisionModel {
         });
         int topK = Math.min(Math.max(1, config.topK), scores.size());
         return new ArrayList<>(scores.subList(0, topK));
+    }
+
+    private List<ClassificationScore> parseRawClassScores(float[] nativeScores) throws DetectException {
+        float[] normalizedScores = normalizeScores(nativeScores);
+        List<ClassificationScore> scores = new ArrayList<>();
+        for (int classId = 0; classId < normalizedScores.length; classId++) {
+            String label = labels == null ? null : labels.get(classId);
+            if (label == null || label.trim().length() == 0) {
+                label = String.valueOf(classId);
+            }
+            scores.add(new ClassificationScore(classId, label, normalizedScores[classId]));
+        }
+        if (scores.isEmpty()) {
+            throw new DetectException(inferErrorCode, "NCNN classification raw output parse result is empty");
+        }
+        Collections.sort(scores, new Comparator<ClassificationScore>() {
+            @Override
+            public int compare(ClassificationScore left, ClassificationScore right) {
+                return Float.compare(right.score, left.score);
+            }
+        });
+        int topK = Math.min(Math.max(1, config.topK), scores.size());
+        return new ArrayList<>(scores.subList(0, topK));
+    }
+
+    private boolean looksLikeClassScorePairs(float[] nativeScores) {
+        if (nativeScores == null || nativeScores.length < 2 || nativeScores.length % 2 != 0) {
+            return false;
+        }
+        for (int index = 0; index + 1 < nativeScores.length; index += 2) {
+            float rawClassId = nativeScores[index];
+            int classId = Math.round(rawClassId);
+            if (Math.abs(rawClassId - classId) > 0.001F || classId < 0) {
+                return false;
+            }
+            if (labels != null && !labels.containsKey(classId)) {
+                return false;
+            }
+            float score = nativeScores[index + 1];
+            if (Float.isNaN(score) || Float.isInfinite(score)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private float[] normalizeScores(float[] rawScores) {
+        float[] scores = new float[rawScores.length];
+        boolean probabilityLike = true;
+        float sum = 0F;
+        for (float value : rawScores) {
+            if (Float.isNaN(value) || Float.isInfinite(value) || value < 0F || value > 1F) {
+                probabilityLike = false;
+                break;
+            }
+            sum += value;
+        }
+        if (probabilityLike && sum > 0.999F && sum < 1.001F) {
+            System.arraycopy(rawScores, 0, scores, 0, rawScores.length);
+            return scores;
+        }
+
+        float max = rawScores[0];
+        for (float value : rawScores) {
+            max = Math.max(max, value);
+        }
+        float expSum = 0F;
+        for (int i = 0; i < rawScores.length; i++) {
+            scores[i] = (float) Math.exp(rawScores[i] - max);
+            expSum += scores[i];
+        }
+        if (expSum <= 0F || Float.isNaN(expSum) || Float.isInfinite(expSum)) {
+            return rawScores;
+        }
+        for (int i = 0; i < scores.length; i++) {
+            scores[i] = scores[i] / expSum;
+        }
+        return scores;
     }
 
     private native long loadModelNative(
