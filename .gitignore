@@ -3,6 +3,10 @@
 build/
 **/build/
 
+# Native (CMake / NDK) build cache
+.cxx/
+**/.cxx/
+
 # IDE and local machine files
 .idea/
 *.iml

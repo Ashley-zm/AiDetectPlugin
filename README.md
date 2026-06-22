@@ -1,6 +1,41 @@
 # AiDetectPlugin
 
-Minimal uni-app Android native plugin used only to verify that Java native plugin calls work.
+uni-app（DCloud HBuilderX）Android 原生插件，基于 **CameraX + NCNN** 提供实时图像质量检测与目标检测能力。
 
-This first phase intentionally excludes CameraX, NCNN, model files, and inference code.
+- 运行时插件 id：`AiDetectPlugin` —— `uni.requireNativePlugin('AiDetectPlugin')`
+- 当前版本：`v1.3.0`
+- 能力：YOLOv8 目标检测、ResNet18 质量判定（模糊 / 翻拍）三段 Pipeline、实时帧检测、拍照推理
 
+## 快速开始
+
+```js
+const ai = uni.requireNativePlugin('AiDetectPlugin')
+
+ai.startDetect({ pipelineMode: false }, (res) => {
+  console.log(res)
+})
+```
+
+## 文档
+
+- 完整开发文档、接口规范、代码说明：见 [DEVELOPMENT.md](DEVELOPMENT.md)
+- 版本变更记录：见 [releases/CHANGELOG.md](releases/CHANGELOG.md)
+
+## 工程结构（概览）
+
+```
+nativeplugins/AiDetectPlugin/
+├── package.json                       # uni-app 原生插件描述
+├── android/AiDetectPlugin-release.aar # 打包产物
+└── android-src/                       # Android Library 源码（Java + JNI + 模型资源）
+dcloud-uniplugin-stubs/                # 本地编译用 DCloud SDK 桩（compileOnly）
+releases/                              # 历史发布归档 + CHANGELOG
+```
+
+## 构建
+
+```powershell
+.\gradlew :AiDetectPlugin:assembleRelease
+```
+
+产物同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar` 后，在 HBuilderX 打 Android 自定义基座使用。
