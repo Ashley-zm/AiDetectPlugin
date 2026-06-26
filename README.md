@@ -34,8 +34,17 @@ releases/                              # 历史发布归档 + CHANGELOG
 
 ## 构建
 
+一键构建 + 同步 + 发布打包（按既有发布流程，版本号取自 `package.json`）：
+
+```powershell
+.\build-release.ps1            # 构建 release AAR、同步、生成 releases/AiDetectPlugin-v{version}/ 与 .zip
+.\build-release.ps1 -NoArchive # 只重建并同步 AAR，不打发布包（日常本地重建）
+```
+
+或只跑底层 Gradle 任务：
+
 ```powershell
 .\gradlew :AiDetectPlugin:assembleRelease
 ```
 
-产物同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar` 后，在 HBuilderX 打 Android 自定义基座使用。
+产物同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar` 后，在 HBuilderX 打 Android 自定义基座使用。脚本不会自动改 `package.json` 版本号或 `releases/CHANGELOG.md`，发版前请先手动改好版本、打包后补写变更记录。

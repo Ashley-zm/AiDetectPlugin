@@ -25,7 +25,8 @@ public final class DefaultQualityModelConfig {
                 2,
                 "fuzzy",
                 PASS_LABEL,
-                false
+                false,
+                "yolov8"
         );
     }
 
@@ -45,7 +46,8 @@ public final class DefaultQualityModelConfig {
                 2,
                 "remake",
                 PASS_LABEL,
-                false
+                false,
+                "yolov8"
         );
     }
 }

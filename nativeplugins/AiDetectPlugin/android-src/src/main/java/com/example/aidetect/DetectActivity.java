@@ -38,7 +38,7 @@ import com.alibaba.fastjson.JSONObject;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
-import java.util.Locale;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -485,15 +485,16 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void updateVisionResult(int frameCount, @NonNull VisionResult visionResult) {
         analyzedFrameCount = frameCount;
         hasTarget = visionResult.hasTarget;
-        detectionBoxCount = visionResult.boxes.size();
-        maxScore = 0F;
 
-        for (DetectionBox box : visionResult.boxes) {
+        List<DetectionBox> drawBoxes = activeConfig().filterDrawBoxes(visionResult.boxes);
+        detectionBoxCount = drawBoxes.size();
+        maxScore = 0F;
+        for (DetectionBox box : drawBoxes) {
             maxScore = Math.max(maxScore, box.score);
         }
 
         if (overlayView != null) {
-            overlayView.setResults(visionResult.boxes);
+            overlayView.setResults(drawBoxes);
         }
 
         DetectCallbackManager.notifyVisionResult(visionResult);
@@ -504,19 +505,23 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         analyzedFrameCount = frameCount;
         hasTarget = pipelineResult.hasTarget;
         VisionResult detectionResult = pipelineResult.detectionResult;
-        detectionBoxCount = detectionResult == null ? 0 : detectionResult.boxes.size();
-        maxScore = 0F;
 
-        if (detectionResult != null) {
-            for (DetectionBox box : detectionResult.boxes) {
+        boolean shouldDrawBoxes = PipelineStatus.TARGET_FOUND.name().equals(pipelineResult.pipelineStatus)
+                && detectionResult != null;
+        List<DetectionBox> drawBoxes = shouldDrawBoxes
+                ? activeConfig().filterDrawBoxes(detectionResult.boxes)
+                : null;
+
+        detectionBoxCount = drawBoxes == null ? 0 : drawBoxes.size();
+        maxScore = 0F;
+        if (drawBoxes != null) {
+            for (DetectionBox box : drawBoxes) {
                 maxScore = Math.max(maxScore, box.score);
             }
         }
 
-        boolean shouldDrawBoxes = PipelineStatus.TARGET_FOUND.name().equals(pipelineResult.pipelineStatus)
-                && detectionResult != null;
         if (overlayView != null) {
-            overlayView.setResults(shouldDrawBoxes ? detectionResult.boxes : null);
+            overlayView.setResults(drawBoxes);
         }
 
         currentStatus = pipelineResult.message;
@@ -525,6 +530,11 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         }
         DetectCallbackManager.notifyPipelineResult(pipelineResult);
         refreshStatusText();
+    }
+
+    private DetectConfig activeConfig() {
+        DetectConfig config = modelConfig;
+        return config != null ? config : DetectConfig.snapshot();
     }
 
     private VisionResult mapResultToOverlay(@NonNull VisionResult rawResult, int bitmapWidth, int bitmapHeight) throws DetectException {
@@ -927,22 +937,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     }
 
     private String detectionLabelsOf(VisionResult result) {
-        if (result == null || result.boxes == null || result.boxes.isEmpty()) {
-            return "[]";
-        }
-
-        StringBuilder builder = new StringBuilder("[");
-        for (int i = 0; i < result.boxes.size(); i++) {
-            DetectionBox box = result.boxes.get(i);
-            if (i > 0) {
-                builder.append(", ");
-            }
-            builder.append(box.label == null || box.label.trim().length() == 0 ? "class_" + box.classId : box.label)
-                    .append(":")
-                    .append(String.format(Locale.US, "%.2f", box.score));
-        }
-        builder.append("]");
-        return builder.toString();
+        return LabelUtils.formatDetections(result == null ? null : result.boxes);
     }
 
     private int dp(int value) {

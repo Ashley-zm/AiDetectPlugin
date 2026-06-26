@@ -74,6 +74,7 @@ AiDetectPlugin/
 ├── build.gradle                      # 根：声明 AGP 版本（apply false）
 ├── settings.gradle                   # 包含 :AiDetectPlugin 与 :dcloud-uniplugin-stubs
 ├── gradle.properties                 # android.useAndroidX=true 等
+├── build-release.ps1                 # 一键构建 + 同步 + 发布打包脚本
 │
 ├── dcloud-uniplugin-stubs/           # 仅本地编译用的 DCloud SDK 桩（compileOnly）
 │   └── src/main/java/io/dcloud/feature/uniapp/...
@@ -91,7 +92,8 @@ AiDetectPlugin/
 │       └── src/main/
 │           ├── AndroidManifest.xml   # 声明 CAMERA 权限 + DetectActivity
 │           ├── assets/models/        # 模型资源（param/bin/labels.txt）
-│           │   ├── yolov8n_ncnn/
+│           │   ├── yolov8n_ncnn/      # YOLOv8 检测（默认）
+│           │   ├── object/            # 外部 YOLOv5 检测模型（mqj_Integration_v14，modelArch=yolov5）
 │           │   └── quality/
 │           │       ├── resnet18_fuzzy_ncnn/
 │           │       └── resnet18_remake_ncnn/
@@ -174,6 +176,7 @@ AiDetectPlugin/
 - `ImageProxyBitmapConverter` 把 `YUV_420_888` 帧转 NV21 → JPEG → `Bitmap`，并按 `rotationDegrees` 旋正。
 - 按模式分发到 `VisionModel.infer` 或 `VisionPipeline.infer`。
 - 结果坐标从 Bitmap 尺寸映射到 Overlay 视图尺寸（`CoordinateUtils.mapBoxes`），回 UI 线程刷新叠框与状态栏，并经 `DetectCallbackManager` 回传 JS（受 `callbackInterval` 节流）。
+- 若设置了顶层 `labels`（绘制白名单），仅把 label 命中白名单的检测框送去**叠框绘制与状态栏计数**（`DetectConfig.filterDrawBoxes`）；**回调回传的 `boxes` / `hasTarget` 不受影响**，仍为全部检测结果。
 - `finally` 中务必 `bitmap.recycle()` 与 `imageProxy.close()`。
 
 ### 5.3 Pipeline 三段判定（`VisionPipeline.infer`）
@@ -192,7 +195,7 @@ target 检测模型推理
  └─ 无检测框                             → 返回 NO_TARGET（未检测到目标）
 ```
 
-只有 `TARGET_FOUND` 状态才在 Overlay 上绘制检测框。
+只有 `TARGET_FOUND` 状态才在 Overlay 上绘制检测框；若设置了 `labels` 绘制白名单，则在此基础上进一步只画 label 命中白名单的框。
 
 ### 5.4 拍照流程（`takeSnapshot` / 页面"拍照"按钮）
 
@@ -236,6 +239,7 @@ ai.startDetect({
   pipelineMode: false,
   modelType: 'detection',
   engine: 'ncnn',
+  modelArch: 'yolov8',     // 默认；YOLOv5 模型则填 'yolov5'
   modelName: 'yolov8n',
   modelPath: 'models/yolov8n_ncnn/yolov8n.param',
   binPath: 'models/yolov8n_ncnn/yolov8n.bin',
@@ -244,7 +248,8 @@ ai.startDetect({
   iouThreshold: 0.45,
   inputSize: 640,
   detectInterval: 500,
-  callbackInterval: 500
+  callbackInterval: 500,
+  labels: 'person,car'     // 仅绘制 person / car 检测框；留空则全部绘制
 }, (res) => { console.log(res) })
 
 // 质量 Pipeline（模糊 → 翻拍 → 目标检测）
@@ -252,13 +257,35 @@ ai.startDetect({
   pipelineMode: true,
   detectInterval: 500,
   callbackInterval: 500,
+  labels: 'person,car',    // 目标检测段仅绘制 person / car，顶层传入
   targetModel: {           // pipelineMode=true 时必填
     modelType: 'detection',
     engine: 'ncnn',
+    modelArch: 'yolov8',   // 默认；YOLOv5 模型则填 'yolov5'
     modelName: 'yolov8n',
     modelPath: 'models/yolov8n_ncnn/yolov8n.param',
     binPath: 'models/yolov8n_ncnn/yolov8n.bin',
     labelPath: 'models/yolov8n_ncnn/labels.txt',
+    threshold: 0.5,
+    iouThreshold: 0.45,
+    inputSize: 640
+  }
+}, (res) => { console.log(res.pipelineStatus, res) })
+
+// 外部 YOLOv5 检测模型（Pipeline 模式，必须显式声明 modelArch: 'yolov5'）
+ai.startDetect({
+  pipelineMode: true,
+  detectInterval: 500,
+  callbackInterval: 500,
+  labels: '13',            // 可选：仅绘制 class 13（该模型 labels.txt 为 0~25）；留空则全部绘制
+  targetModel: {
+    modelType: 'detection',
+    engine: 'ncnn',
+    modelArch: 'yolov5',   // ★ YOLOv5 必填，否则按 yolov8 解码会类别错位、置信度不对
+    modelName: 'mqj_Integration_v14',
+    modelPath: 'models/object/mqj_Integration_v14.ncnn.param',
+    binPath: 'models/object/mqj_Integration_v14.ncnn.bin',
+    labelPath: 'models/object/labels.txt',
     threshold: 0.5,
     iouThreshold: 0.45,
     inputSize: 640
@@ -280,6 +307,7 @@ ai.startDetect({
 | `targetModel` | object | — | Pipeline 模式下的目标检测模型配置（见下表） |
 | `detectInterval` | int(ms) | `500` | 实时帧分析最小间隔（节流） |
 | `callbackInterval` | int(ms) | `500` | 实时结果回传最小间隔（节流） |
+| `labels` | string | `""` | 目标检测**绘制**标签白名单，多个标签以英文逗号分隔（如 `"person,car"`）。留空＝目标检测出什么就绘制什么；非空时仅绘制 label 命中白名单的检测框（匹配大小写不敏感、自动去首尾空白）。单模型 / Pipeline 模式均生效，且只影响 Overlay 叠框与状态栏计数，不改变回调返回的 `boxes`/`hasTarget` 数据 |
 
 ### 模型级（ModelConfig，顶层或 targetModel 内）
 
@@ -287,6 +315,7 @@ ai.startDetect({
 | --- | --- | --- | --- |
 | `modelType` | string | `detection` | `detection` / `classification` |
 | `engine` | string | `ncnn` | `ncnn` / `mock`（Mock 仅用于演示，生成随机框） |
+| `modelArch` | string | `yolov8` | 目标检测输出解码方式：`yolov8`（anchor-free，无 objectness）/ `yolov5`（anchor-based，含 objectness，置信度＝objectness×类别分数）。**模型是 YOLOv5 时必须显式设为 `yolov5`**，否则类别会整体错位、置信度也不对 |
 | `modelName` | string | `yolov8n` | 模型名（日志与结果标识） |
 | `modelPath` | string | `models/yolov8n_ncnn/yolov8n.param` | `.param` 文件，或仅给目录由插件自动查找 |
 | `binPath` | string | `models/yolov8n_ncnn/yolov8n.bin` | `.bin` 文件；留空则按 param 同名推断或目录查找 |
@@ -300,6 +329,8 @@ ai.startDetect({
 | `useGpu` | boolean | `false` | 是否尝试 Vulkan（无 Vulkan 构建会回退 CPU） |
 
 > 路径解析见 `AssetModelPathUtils`：支持「直接给 `.param`/`.bin`」「仅给目录自动查找扩展名」「按 param 推断同名 bin」三种方式，并在加载前校验 assets 是否存在。
+
+> **YOLOv5 模型**：把 `modelArch` 设为 `yolov5` 即可，其余字段同 YOLOv8（完整调用见 §6「调用示例」里的 YOLOv5 示例）。原生解码（`parse_detection_output`）按 `4(box)+1(objectness)+nc(classes)` 解析、置信度取 `objectness×类别分数`；要求导出图已内置 decode（sigmoid/anchor/stride 在图内），输出单一 blob（名在 `out0/output0/output/prob` 中），形如 `[N, 5+nc]`。
 
 ---
 
@@ -408,14 +439,14 @@ Java 源码位于 `nativeplugins/AiDetectPlugin/android-src/src/main/java/com/ex
 | `VisionPipeline.java` | 质量 Pipeline 编排：fuzzy → remake → target 三段串联与短路返回。 |
 | `PipelineResult.java` / `PipelineStatus.java` | Pipeline 结果对象与状态枚举（含中文文案）。 |
 | `ModelFactory.java` / `TargetModelFactory.java` / `QualityModelFactory.java` | 根据 `modelType/engine` 创建对应 `VisionModel`（ncnn / mock；质量模型注入专属错误码）。 |
-| `YoloNcnnDetector.java` | YOLO 检测的 NCNN 封装；加载 native 库、`loadModelNative/inferNative/releaseNative`。 |
+| `YoloNcnnDetector.java` | YOLO 检测的 NCNN 封装；加载 native 库、`loadModelNative/inferNative/releaseNative`；按 `modelArch`（`yolov8`/`yolov5`）把解码架构码传给 `inferNative`；每次推理打印检测标签日志。 |
 | `ResNetNcnnClassifier.java` | ResNet 分类的 NCNN 封装；解析多种输出格式、质量模型 0/1 标签语义、softmax 归一化。 |
 | `YoloPostProcessor.java` | 把 native 返回的扁平 `float[]` 解析为检测框，按阈值过滤并做 NMS。 |
 | `NmsUtils.java` | 同类框 NMS（按分数降序 + IoU 抑制）。 |
 | `CoordinateUtils.java` | 检测框坐标从源（Bitmap）尺寸映射到目标（Overlay）尺寸并裁剪。 |
 | `ImageProxyBitmapConverter.java` | `YUV_420_888` → NV21 → JPEG → `Bitmap`，含旋转矫正与缓冲复用。 |
 | `AssetModelPathUtils.java` | assets 内模型路径解析与存在性校验。 |
-| `LabelUtils.java` | 解析 `labels.txt`（支持「每行一个，行号即 classId」与「`classId: label`」两种格式）。 |
+| `LabelUtils.java` | 解析 `labels.txt`（支持「每行一个，行号即 classId」与「`classId: label`」两种格式）；`formatDetections` 把检测框列表格式化为 `[label:score]` 日志摘要（供算法层与 Activity 共用）。 |
 | `ClassificationScore.java` / `DetectionBox.java` | 分类分数 / 检测框数据对象。 |
 | `DetectOverlayView.java` | 自定义 `View`，在预览上绘制检测框与标签。 |
 | `DetectCallbackManager.java` | 回调中心：detect / snapshot 两路回调、节流、线程切换到主线程。 |
@@ -446,7 +477,7 @@ struct NativeModel {
 | Java native | C 函数 |
 | --- | --- |
 | `YoloNcnnDetector.loadModelNative` | `..._YoloNcnnDetector_loadModelNative` |
-| `YoloNcnnDetector.inferNative` | `..._YoloNcnnDetector_inferNative` → `float[]`（每框 6 元素：classId, score, l, t, r, b） |
+| `YoloNcnnDetector.inferNative` | `..._YoloNcnnDetector_inferNative`（入参含 `inputSize, arch`）→ `float[]`（每框 6 元素：classId, score, l, t, r, b） |
 | `YoloNcnnDetector.releaseNative` | `..._YoloNcnnDetector_releaseNative` |
 | `ResNetNcnnClassifier.loadModelNative` | `..._ResNetNcnnClassifier_loadModelNative` |
 | `ResNetNcnnClassifier.inferNative` | `..._ResNetNcnnClassifier_inferNative` → `float[]`（softmax 概率） |
@@ -463,12 +494,14 @@ struct NativeModel {
 - 输入尝试：`images` / `in0` / `input` / `data`
 - 输出尝试：`output0` / `out0` / `output` / `prob`
 
-### YOLOv8 输出解析（`parse_yolov8_output`）
+### 目标检测输出解析（`parse_detection_output`）
 
-- 兼容两种二维布局：`[attributes, anchors]`（`rows<=256 且 cols>rows`）与 `[anchors, attributes]`。
-- `class_count = attributes - 4`，前 4 为 `cx,cy,w,h`。
-- 若坐标值 ≤ 2 视为归一化坐标，乘以 `input_size` 还原。
-- 按 `image/input` 比例缩放回原图，并裁剪到图像边界；`score < 0.001` 或非法框丢弃（最终阈值在 Java 侧 `YoloPostProcessor` 按 `threshold` 过滤 + NMS）。
+按 `arch` 入参（`0`=YOLOv8 / `1`=YOLOv5，源自模型级 `modelArch`）分支解码，兼容两种二维布局：`[attributes, anchors]`（`rows<=256 且 cols>rows`）与 `[anchors, attributes]`。
+
+- **YOLOv8**（默认，anchor-free）：每个候选 `4(cx,cy,w,h) + nc(classes)`，无 objectness，`class_count = attributes - 4`，置信度＝类别分数最大值。
+- **YOLOv5**（anchor-based）：每个候选 `4(box) + 1(objectness) + nc(classes)`，`class_count = attributes - 5`，类别从下标 5 起，**置信度＝`objectness × 类别分数最大值`**；要求导出图已内置 decode（sigmoid/anchor/stride 在图内），输出单一 blob（形如 `[N, 5+nc]`）。
+- 共用后处理：坐标值 ≤ 2 视为归一化坐标则乘 `input_size` 还原；按 `image/input` 比例缩放回原图并裁剪到边界；`score < 0.001` 或非法框丢弃（最终阈值在 Java 侧 `YoloPostProcessor` 按 `threshold` 过滤 + NMS）。
+- 两种架构内存布局相同、无法靠形状区分，故 `arch` **必须由 `modelArch` 显式指定**；`arch` 由 `YoloNcnnDetector` 计算后经 `inferNative` 传入。
 
 ### 分类输出（`classification_to_jfloat_array`）
 
@@ -488,7 +521,7 @@ struct NativeModel {
 
 质量模型的 `labels.txt` **必须**正好是 `0` 和 `1` 两行，否则抛 `FUZZY_LABELS_INVALID` / `REMAKE_LABELS_INVALID`（见 `ResNetNcnnClassifier.validateNumericQualityLabels`）。
 
-> 集成新外部检测模型：把 `.param/.bin/labels.txt` 放入 assets，调用时通过 `targetModel`（或单模型顶层字段）传入路径、`inputSize`、`threshold` 等即可，无需改原生代码。
+> 集成新外部检测模型：把 `.param/.bin/labels.txt` 放入 assets，调用时通过 `targetModel`（或单模型顶层字段）传入路径、`inputSize`、`threshold` 等即可，无需改原生代码。**若模型是 YOLOv5 架构，额外把 `modelArch` 设为 `yolov5`**（否则按默认 `yolov8` 解码会导致类别错位、置信度不对）。
 
 ---
 
@@ -496,8 +529,18 @@ struct NativeModel {
 
 ### 本地构建 AAR
 
+一键构建 + 同步 + 发布打包（推荐，版本号取自 `package.json`，见下方「发布流程」）：
+
 ```powershell
 # 工程根目录
+.\build-release.ps1            # 构建 release AAR、同步、生成 releases/AiDetectPlugin-v{version}/ 与 .zip
+.\build-release.ps1 -NoArchive # 只重建并同步 AAR，不打发布包（日常本地重建）
+.\build-release.ps1 -Force     # 允许覆盖已存在的同版本归档
+```
+
+或只跑底层 Gradle 任务：
+
+```powershell
 .\gradlew :AiDetectPlugin:assembleRelease
 ```
 
@@ -523,10 +566,13 @@ nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar
 
 ### 发布流程
 
-1. 改动源码并本地编译验证（`compileReleaseJavaWithJavac` / `lintRelease`）。
-2. 重新生成并同步 `AiDetectPlugin-release.aar`。
-3. 复制到 `releases/AiDetectPlugin-vX.Y.Z/`，打 zip，更新 `releases/CHANGELOG.md`。
-4. 在 HBuilderX 重新打 Android 自定义基座，**先卸载设备上的旧基座**再安装。
+1. 改动源码并本地编译验证（Java：`compileReleaseJavaWithJavac`；改了 C++ 时还要 `externalNativeBuildRelease`）。
+2. 先手动把 `nativeplugins/AiDetectPlugin/package.json` 的 `version` 改成目标版本号。
+3. 运行 `.\build-release.ps1`：自动「构建 release AAR → 同步到 `android/` → 生成 `releases/AiDetectPlugin-v{version}/`（`package.json` + AAR）→ 打 zip」。默认拒绝覆盖同版本归档（保护历史发布），确需重打加 `-Force`。
+4. 按既有格式在 `releases/CHANGELOG.md` 顶部补写该版本变更记录（脚本不自动写）。
+5. 在 HBuilderX 重新打 Android 自定义基座，**先卸载设备上的旧基座**再安装。
+
+> 改动原生 C++（`yolo_ncnn_jni.cpp`）后务必重打 AAR，否则 `.so` 不更新；可用 `unzip -p .../AiDetectPlugin-release.aar jni/arm64-v8a/libyolov8ncnn.so | grep -a <新增字符串>` 验证产物是否含改动。
 
 ---
 
@@ -563,7 +609,7 @@ nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar
 adb logcat -s AiDetectPlugin
 ```
 
-关键日志点：模型加载（`VisionModel initialized`）、帧分析（`YOLO analyzed` / `Pipeline analyzed`）、分类解析（`Classification parsed`）、JNI（`ncnn input/output blob matched`、`labels loaded`）。
+关键日志点：模型加载（`VisionModel initialized`）、帧分析（`YOLO analyzed` / `Pipeline analyzed`）、目标检测标签（`目标检测算法检测标签`，含 `arch`/`count`/`labels`）、分类解析（`Classification parsed`）、JNI（`ncnn input/output blob matched`、`detection parse arch`、`labels loaded`）。
 
 ### 常见问题
 

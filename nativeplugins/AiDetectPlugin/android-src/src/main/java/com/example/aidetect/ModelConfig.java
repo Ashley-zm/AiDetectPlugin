@@ -19,6 +19,8 @@ public class ModelConfig {
     public final String positiveLabel;
     public final String passLabel;
     public final boolean useGpu;
+    /** 目标检测模型架构：{@code yolov8}（默认，anchor-free）或 {@code yolov5}（带 objectness），决定原生解码方式。 */
+    public final String modelArch;
 
     public ModelConfig(
             String modelType,
@@ -35,7 +37,8 @@ public class ModelConfig {
             int topK,
             String positiveLabel,
             String passLabel,
-            boolean useGpu
+            boolean useGpu,
+            String modelArch
     ) {
         this.modelType = modelType;
         this.engine = engine;
@@ -52,6 +55,7 @@ public class ModelConfig {
         this.positiveLabel = positiveLabel;
         this.passLabel = passLabel;
         this.useGpu = useGpu;
+        this.modelArch = modelArch;
     }
 
     public static ModelConfig fromJson(JSONObject options, ModelConfig defaults) {
@@ -74,7 +78,8 @@ public class ModelConfig {
                 getInt(options, "topK", defaults.topK),
                 getString(options, "positiveLabel", defaults.positiveLabel),
                 getString(options, "passLabel", defaults.passLabel),
-                getBoolean(options, "useGpu", defaults.useGpu)
+                getBoolean(options, "useGpu", defaults.useGpu),
+                getString(options, "modelArch", defaults.modelArch)
         );
     }
 

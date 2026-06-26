@@ -5,6 +5,7 @@ import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.util.Log;
 
+import java.util.Locale;
 import java.util.Map;
 
 public class YoloNcnnDetector implements VisionModel {
@@ -12,6 +13,9 @@ public class YoloNcnnDetector implements VisionModel {
     private static final String TAG = "AiDetectPlugin";
     private static final String NCNN_LIBRARY_NAME = "ncnn";
     private static final String NATIVE_LIBRARY_NAME = "yolov8ncnn";
+    // 与 native parse_detection_output 的 arch 取值保持一致
+    private static final int ARCH_YOLOV8 = 0;
+    private static final int ARCH_YOLOV5 = 1;
     private static Throwable nativeLibraryLoadError;
 
     static {
@@ -58,7 +62,8 @@ public class YoloNcnnDetector implements VisionModel {
                 config.topK,
                 config.positiveLabel,
                 config.passLabel,
-                config.useGpu
+                config.useGpu,
+                config.modelArch
         )
                 : config.targetModelConfig;
 
@@ -116,8 +121,15 @@ public class YoloNcnnDetector implements VisionModel {
         }
 
         try {
-            float[] nativeBoxes = inferNative(nativeHandle, bitmap, Math.max(1, modelConfig.inputSize));
-            return YoloPostProcessor.fromNativeDetections(nativeBoxes, config, labels);
+            int archCode = archCodeOf(modelConfig.modelArch);
+            float[] nativeBoxes = inferNative(nativeHandle, bitmap, Math.max(1, modelConfig.inputSize), archCode);
+            VisionResult result = YoloPostProcessor.fromNativeDetections(nativeBoxes, config, labels);
+            Log.i(TAG, "目标检测算法检测标签"
+                    + ", model=" + modelConfig.modelName
+                    + ", arch=" + modelConfig.modelArch
+                    + ", count=" + result.boxes.size()
+                    + ", labels=" + LabelUtils.formatDetections(result.boxes));
+            return result;
         } catch (DetectException detectException) {
             throw detectException;
         } catch (Throwable throwable) {
@@ -140,6 +152,16 @@ public class YoloNcnnDetector implements VisionModel {
         labels = null;
     }
 
+    private static int archCodeOf(String modelArch) {
+        if (modelArch != null) {
+            String arch = modelArch.trim().toLowerCase(Locale.US);
+            if ("yolov5".equals(arch) || "v5".equals(arch)) {
+                return ARCH_YOLOV5;
+            }
+        }
+        return ARCH_YOLOV8;
+    }
+
     private native long loadModelNative(
             AssetManager mgr,
             String paramPath,
@@ -148,7 +170,7 @@ public class YoloNcnnDetector implements VisionModel {
             boolean useGpu
     );
 
-    private native float[] inferNative(long nativeHandle, Bitmap bitmap, int inputSize);
+    private native float[] inferNative(long nativeHandle, Bitmap bitmap, int inputSize, int arch);
 
     private native void releaseNative(long nativeHandle);
 }

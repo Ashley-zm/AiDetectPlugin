@@ -38,6 +38,13 @@ struct NativeModel {
 constexpr int kValuesPerBox = 6;
 constexpr float kNativeScoreFloor = 0.001f;
 
+// 目标检测模型架构：决定输出张量的解码方式。
+//  - YOLOv8：anchor-free，每个候选 = 4(box) + nc(classes)，无 objectness，置信度 = max(cls)
+//  - YOLOv5：anchor-based（解码已内置在导出图中），每个候选 = 4(box) + 1(objectness) + nc(classes)，
+//            置信度 = objectness * max(cls)
+constexpr int kArchYolov8 = 0;
+constexpr int kArchYolov5 = 1;
+
 std::string jstring_to_string(JNIEnv *env, jstring value) {
     if (value == nullptr) {
         return "";
@@ -293,85 +300,78 @@ void append_yolo_box(
     });
 }
 
-void parse_yolov8_output(
+void parse_detection_output(
         const ncnn::Mat &output,
         int image_width,
         int image_height,
         int input_size,
+        int arch,
         std::vector<NativeBox> &boxes) {
     if (output.dims != 2) {
-        LOGE("YOLOv8 parser expected dims=2, got dims=%d w=%d h=%d c=%d",
+        LOGE("detection parser expected dims=2, got dims=%d w=%d h=%d c=%d",
              output.dims, output.w, output.h, output.c);
         return;
     }
 
     const int rows = output.h;
     const int cols = output.w;
-    if (rows < 5 || cols < 1) {
-        LOGE("YOLOv8 output too small, rows=%d cols=%d", rows, cols);
+    if (rows < 1 || cols < 1) {
+        LOGE("detection output too small, rows=%d cols=%d", rows, cols);
         return;
     }
 
-    if (rows <= 256 && cols > rows) {
-        const int attributes = rows;
-        const int anchors = cols;
-        const int class_count = attributes - 4;
-        for (int anchor = 0; anchor < anchors; anchor++) {
-            float best_score = 0.f;
-            int best_class = -1;
-            for (int cls = 0; cls < class_count; cls++) {
-                const float score = output.row(4 + cls)[anchor];
-                if (score > best_score) {
-                    best_score = score;
-                    best_class = cls;
-                }
-            }
+    // YOLOv5 比 YOLOv8 多一个 objectness 维度（位于 box 之后、classes 之前）。
+    const bool has_objectness = (arch == kArchYolov5);
+    const int meta = has_objectness ? 5 : 4;
 
-            append_yolo_box(
-                    boxes,
-                    image_width,
-                    image_height,
-                    input_size,
-                    output.row(0)[anchor],
-                    output.row(1)[anchor],
-                    output.row(2)[anchor],
-                    output.row(3)[anchor],
-                    best_class,
-                    best_score
-            );
-        }
+    // 两种内存布局：属性优先 [attributes, anchors] 或 锚点优先 [anchors, attributes]。
+    const bool attribute_major = (rows <= 256 && cols > rows);
+    const int anchors = attribute_major ? cols : rows;
+    const int attributes = attribute_major ? rows : cols;
+    if (attributes <= meta) {
+        LOGE("detection attributes=%d too small for arch=%d (need > %d)", attributes, arch, meta);
         return;
     }
+    const int class_count = attributes - meta;
 
-    if (cols >= 5) {
-        const int anchors = rows;
-        const int attributes = cols;
-        const int class_count = attributes - 4;
-        for (int anchor = 0; anchor < anchors; anchor++) {
-            const float *values = output.row(anchor);
-            float best_score = 0.f;
-            int best_class = -1;
-            for (int cls = 0; cls < class_count; cls++) {
-                const float score = values[4 + cls];
-                if (score > best_score) {
-                    best_score = score;
-                    best_class = cls;
-                }
+    LOGI("detection parse arch=%d layout=%s anchors=%d attributes=%d classes=%d",
+         arch, attribute_major ? "attr-major" : "anchor-major", anchors, attributes, class_count);
+
+    for (int anchor = 0; anchor < anchors; anchor++) {
+        const float *values = attribute_major ? nullptr : output.row(anchor);
+        const float cx = attribute_major ? output.row(0)[anchor] : values[0];
+        const float cy = attribute_major ? output.row(1)[anchor] : values[1];
+        const float w = attribute_major ? output.row(2)[anchor] : values[2];
+        const float h = attribute_major ? output.row(3)[anchor] : values[3];
+
+        const float objectness = !has_objectness
+                ? 1.0f
+                : (attribute_major ? output.row(4)[anchor] : values[4]);
+
+        float best_class_score = 0.f;
+        int best_class = -1;
+        for (int cls = 0; cls < class_count; cls++) {
+            const float score = attribute_major
+                    ? output.row(meta + cls)[anchor]
+                    : values[meta + cls];
+            if (score > best_class_score) {
+                best_class_score = score;
+                best_class = cls;
             }
-
-            append_yolo_box(
-                    boxes,
-                    image_width,
-                    image_height,
-                    input_size,
-                    values[0],
-                    values[1],
-                    values[2],
-                    values[3],
-                    best_class,
-                    best_score
-            );
         }
+
+        append_yolo_box(
+                boxes,
+                image_width,
+                image_height,
+                input_size,
+                cx,
+                cy,
+                w,
+                h,
+                best_class,
+                has_objectness ? objectness * best_class_score : best_class_score
+        );
     }
 }
 
@@ -454,7 +454,8 @@ Java_com_example_aidetect_YoloNcnnDetector_inferNative(
         jobject thiz,
         jlong native_handle,
         jobject bitmap,
-        jint input_size) {
+        jint input_size,
+        jint arch) {
     (void) thiz;
     NativeModel *model = handle_to_model(native_handle);
     if (model == nullptr || !model->net) {
@@ -491,11 +492,12 @@ Java_com_example_aidetect_YoloNcnnDetector_inferNative(
     }
 
     std::vector<NativeBox> boxes;
-    parse_yolov8_output(
+    parse_detection_output(
             output,
             static_cast<int>(bitmap_info.width),
             static_cast<int>(bitmap_info.height),
             safe_input_size,
+            static_cast<int>(arch),
             boxes
     );
 

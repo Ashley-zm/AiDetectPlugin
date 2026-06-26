@@ -10,6 +10,74 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.3.3 - 2026-06-25
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.3`
+- `releases/AiDetectPlugin-v1.3.3.zip`
+
+变更内容：
+
+- 新增 **YOLOv5 目标检测推理支持**：
+  - 模型级新增入参 `modelArch`：`yolov8`（默认，anchor-free）/ `yolov5`（anchor-based，含 objectness）。
+  - 原生解码统一为 `parse_detection_output` 并按架构分支：YOLOv5 按 `4(box)+1(objectness)+nc(classes)` 解析、置信度＝`objectness×类别分数`；YOLOv8 路径保持原样（向后兼容）。
+  - 适用于已把 decode 内置进计算图、输出单一 blob（形如 `[N, 5+nc]`）的 YOLOv5 导出（如 `mqj_Integration_v14`）。
+- 新增目标检测算法层标签日志：`YoloNcnnDetector` 每次推理打印 `model / arch / count / labels`，便于排查与确认可用标签（TAG=`AiDetectPlugin`）。
+- 基于当前 Android library 源码（含上述改动）重新构建 `AiDetectPlugin-release.aar`，并同步到 `nativeplugins/AiDetectPlugin/android/`。
+- 插件包版本号从 `1.3.2` 升级到 `1.3.3`。
+- 按原发布方式新增一份发布备份，包含 `package.json` 与重新构建的 Android AAR。
+
+注意事项：
+
+- `modelArch` 不传时默认 `yolov8`，行为与旧版本完全一致；**模型是 YOLOv5 时必须显式设为 `yolov5`**，否则类别会整体错位、置信度也不对。
+- 运行时插件 id 仍为 `AiDetectPlugin`，uni-app 侧继续使用 `uni.requireNativePlugin('AiDetectPlugin')`。
+- 离线 Android 打包工程如果直接引入本地 AAR，需要在宿主 App 的 Gradle 依赖中同步声明 `nativeplugins/AiDetectPlugin/package.json` 里的 CameraX、Lifecycle、annotation 与 Guava 依赖。
+
+## v1.3.2 - 2026-06-25
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.2`
+- `releases/AiDetectPlugin-v1.3.2.zip`
+
+变更内容：
+
+- 新增 `startDetect` / `startDetectSync` 顶层入参 `labels`（目标检测绘制标签白名单）：
+  - 字符串类型，多个标签以英文逗号分隔（如 `"person,car"`）。
+  - 留空＝目标检测出什么就绘制什么；非空时仅绘制 label 命中白名单的检测框（匹配大小写不敏感、自动去首尾空白）。
+  - 单模型与质量 Pipeline 模式均生效；仅影响 Overlay 叠框与状态栏计数，不改变回调返回的 `boxes` / `hasTarget` 数据。
+- 随包新增目标检测模型资源 `assets/models/object/mqj_Integration_v14`（`.ncnn.param` / `.ncnn.bin` + `labels.txt`，约 14 MB），已打入 AAR 的 `assets/`，是本版本 AAR 体积由约 68 MB 增至约 81 MB 的原因。
+- 基于当前 Android library 源码重新构建 `AiDetectPlugin-release.aar`。
+- 已将重新构建的 AAR 同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar`。
+- 插件包版本号从 `1.3.1` 升级到 `1.3.2`。
+- 按原发布方式新增一份发布备份，包含 `package.json` 与重新构建的 Android AAR。
+
+注意事项：
+
+- 运行时插件 id 仍为 `AiDetectPlugin`，uni-app 侧继续使用 `uni.requireNativePlugin('AiDetectPlugin')`。
+- `labels` 不传或留空时行为与旧版本完全一致，属向后兼容变更。
+- 离线 Android 打包工程如果直接引入本地 AAR，需要在宿主 App 的 Gradle 依赖中同步声明 `nativeplugins/AiDetectPlugin/package.json` 里的 CameraX、Lifecycle、annotation 与 Guava 依赖。
+
+## v1.3.1 - 2026-06-23
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.1`
+- `releases/AiDetectPlugin-v1.3.1.zip`
+
+变更内容：
+
+- 基于当前 Android library 源码重新构建 `AiDetectPlugin-release.aar`。
+- 已将重新构建的 AAR 同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar`。
+- 插件包版本号从 `1.3.0` 升级到 `1.3.1`。
+- 按原发布方式新增一份发布备份，包含 `package.json` 与重新构建的 Android AAR。
+
+注意事项：
+
+- 运行时插件 id 仍为 `AiDetectPlugin`，uni-app 侧继续使用 `uni.requireNativePlugin('AiDetectPlugin')`。
+- 离线 Android 打包工程如果直接引入本地 AAR，需要在宿主 App 的 Gradle 依赖中同步声明 `nativeplugins/AiDetectPlugin/package.json` 里的 CameraX、Lifecycle、annotation 与 Guava 依赖。
+
 ## v1.3.0 - 2026-05-25
 
 Package:
