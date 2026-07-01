@@ -9,10 +9,15 @@ public class VisionPipeline {
     private VisionModel remakeModel;
     private VisionModel targetDetector;
     private ModelConfig targetModelConfig;
+    private boolean targetDetectionEnabled = true;
     private boolean initialized = false;
 
     public void init(Context context, DetectConfig detectConfig) throws Exception {
-        if (detectConfig == null || detectConfig.targetModelConfig == null) {
+        if (detectConfig == null) {
+            throw new DetectException(DetectErrorCode.MODEL_LOAD_FAILED, "DetectConfig 不能为空");
+        }
+        targetDetectionEnabled = detectConfig.usesTargetDetection();
+        if (targetDetectionEnabled && detectConfig.targetModelConfig == null) {
             throw new DetectException(DetectErrorCode.TARGET_MODEL_MISSING, "targetModel 不能为空");
         }
 
@@ -43,17 +48,21 @@ public class VisionPipeline {
             );
         }
 
-        try {
-            targetDetector = TargetModelFactory.create(targetModelConfig);
-            targetDetector.init(context, DetectConfig.fromModelConfig(targetModelConfig));
-        } catch (DetectException detectException) {
-            throw detectException;
-        } catch (Throwable throwable) {
-            throw new DetectException(
-                    DetectErrorCode.TARGET_MODEL_LOAD_FAILED,
-                    "目标检测模型加载失败：" + throwable.getMessage(),
-                    throwable
-            );
+        if (targetDetectionEnabled) {
+            try {
+                targetDetector = TargetModelFactory.create(targetModelConfig);
+                targetDetector.init(context, DetectConfig.fromModelConfig(targetModelConfig));
+            } catch (DetectException detectException) {
+                throw detectException;
+            } catch (Throwable throwable) {
+                throw new DetectException(
+                        DetectErrorCode.TARGET_MODEL_LOAD_FAILED,
+                        "目标检测模型加载失败：" + throwable.getMessage(),
+                        throwable
+                );
+            }
+        } else {
+            targetDetector = null;
         }
 
         initialized = true;
@@ -123,6 +132,19 @@ public class VisionPipeline {
                 );
             }
 
+            if (!targetDetectionEnabled) {
+                return PipelineResult.success(
+                        PipelineStatus.QUALITY_PASS,
+                        PipelineStatus.QUALITY_PASS.message,
+                        false,
+                        fuzzyResult,
+                        remakeResult,
+                        null,
+                        targetModelName,
+                        resultSource
+                );
+            }
+
             VisionResult detectionResult = targetDetector.infer(bitmap);
             boolean hasTarget = detectionResult != null && detectionResult.boxes != null && !detectionResult.boxes.isEmpty();
             return PipelineResult.success(
@@ -164,6 +186,7 @@ public class VisionPipeline {
         remakeModel = null;
         targetDetector = null;
         targetModelConfig = null;
+        targetDetectionEnabled = true;
         initialized = false;
     }
 

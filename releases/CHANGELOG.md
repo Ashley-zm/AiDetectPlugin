@@ -10,6 +10,234 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.4.4 - 2026-07-01
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.4.4`
+- `releases/AiDetectPlugin-v1.4.4.zip`
+
+变更内容：
+
+- 原生相机页拍照交互改为默认单拍模式：底部左侧显示“多拍模式”，中间快门保持居中，右侧完成按钮隐藏占位。
+- 新增页面内单拍 / 多拍切换：多拍模式下左侧显示“单拍模式”，中间继续拍照，右侧显示“完成”。
+- 单拍模式点击底部快门后返回单张 `snapshot` 并关闭页面；多拍模式继续累积缩略图，点击“完成”统一返回 `images` 数组。
+- 多拍模式切回单拍时，若已拍照片不为空会弹窗确认；确认后清空已拍列表并删除本次临时照片文件。
+- 单拍模式和多拍模式切换按钮暂时复用同一个多拍图标资源，并按参考图采用图标在上、文字在下的底部样式。
+- 完善 `README.md` 与 `DEVELOPMENT.md`，补充默认单拍、多拍切换、切回清空和 `captureMode` 初始模式说明。
+
+验证建议：
+
+- 首次进入相机页应为单拍：左侧“多拍模式”，中间快门居中，右侧不显示完成按钮。
+- 点击“多拍模式”后应切到多拍：左侧文案变为“单拍模式”，右侧出现“完成”；拍摄至少一张后“完成”可点击。
+- 多拍已有照片时切回单拍应出现确认弹窗；确认后缩略图列表清空，右侧完成按钮隐藏。
+- 单拍点击底部快门应返回单张结果并关闭页面；多拍点击“完成”应返回多图 `images`。
+## v1.4.3 - 2026-06-30
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.4.3`
+- `releases/AiDetectPlugin-v1.4.3.zip`
+
+变更内容：
+
+- 原生相机检测页固定竖屏展示：`DetectActivity` 增加 `screenOrientation=portrait`，移除相机页横屏布局，避免旋转后进入横屏界面。
+- 底部拍照按钮改为常见相机快门样式：76dp 白色外圈 + 白色内圆，不再依赖拍照 PNG 图标。
+- 底部操作区域改为屏幕全宽并贴合最底部，去除左右和底部外边距，同时保留内部安全留白。
+- 已拍缩略图右上角新增删除按钮；删除后会移除列表项、删除本地临时照片文件、刷新已拍数量与完成按钮状态，并重新排序照片序号。
+- 收紧“完成”按钮中左侧对号图标和文字的间距，使底部操作区视觉更紧凑。
+
+验证建议：
+
+- 打开相机检测页后旋转设备，不应切换到横屏相机界面。
+- 底部操作栏应铺满屏幕宽度并贴住屏幕底部；中间快门按钮应为白色圆形快门样式。
+- 拍摄多张照片后，缩略图右上角应出现删除按钮；删除任意一张后数量、序号和最终完成结果应同步更新。
+- “完成”按钮中对号和“完成”二字应更贴近，不再显得间距过大。
+
+## v1.4.2 - 2026-06-30
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.4.2`
+- `releases/AiDetectPlugin-v1.4.2.zip`
+
+变更内容：
+
+- 按最新参考图调整顶部 UI：标题栏更紧凑，返回/闪光灯图标缩小并贴近左右侧。
+- 顶部三段状态改为独立深色圆角小胶囊，去除整条分隔线和高状态栏样式。
+- 状态标签字号调整为 11sp，圆点保留彩色状态，文字保持白色。
+- 中间短提示胶囊保持显示，用于提示“可拍照 / 未检测到目标 / 请重新对准”等操作反馈。
+- 新增 `detectMode` 检测模式字段，并兼容旧 `pipelineMode` 调用：未传 `detectMode` 时，`pipelineMode=false` 仍按单目标检测执行，`pipelineMode=true` 仍按完整 Pipeline 执行。
+- 新增 `photo_only` 模式：不加载任何算法模型，不绑定 CameraX `ImageAnalysis`，只保留原生预览、拍照、缩略图和完成返回。
+- 新增 `quality_only` 模式：只执行模糊检测和翻拍检测，不加载目标检测模型；目标状态标签和目标检测框自动隐藏。
+- 完整 Pipeline 模式调整为 `full_pipeline`，流程仍为模糊 → 翻拍 → 目标检测；质量-only 通过时新增 `QUALITY_PASS` 状态。
+- 拍照结果和多图完成结果补充 `detectMode`、`qualified` 字段；`photo_only` 返回无算法结果，`quality_only` 返回质量检测结果且 `boxes=[]` / `detectionResult=null`。
+- 横屏布局同步竖屏 UI 样式，避免横竖屏切换后样式漂移。
+- 清理旧状态卡、无用 Java 代码、未引用图标资源，并在源码/XML 中补充维护注释，便于后续改 UI 和检测模式。
+- 完善 `README.md` 与 `DEVELOPMENT.md`，补充四种模式的调用参数、兼容规则、返回结果示例和验证建议。
+
+验证建议：
+
+- 顶部整体高度应更接近参考图，不再显得厚重。
+- 三个状态标签应是独立小圆角胶囊，而不是一整条分隔栏。
+- 返回、闪光灯、标题位置应与参考图接近。
+- `photo_only` 下应无模型加载日志、无实时 `detect_result` 回调，但可正常拍照、继续拍照和完成返回。
+- `quality_only` 下应只加载 fuzzy/remake 模型，不加载 target 模型；UI 只显示清晰/翻拍标签，通过时返回 `pipelineStatus=QUALITY_PASS`。
+- 旧 `pipelineMode=false` 和 `pipelineMode=true` 调用应保持兼容。
+- 横屏与竖屏应保持同一套顶部、状态标签、底部拍照 UI 样式。
+## v1.4.1 - 2026-06-30
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.4.1`
+- `releases/AiDetectPlugin-v1.4.1.zip`
+
+变更内容：
+
+- 根据用户提供的闪光灯开、闪光灯关、拍照三张参考图，重做按钮图标资源。
+- 新增透明 PNG 图标：闪光灯开启为黄色发光闪电，闪光灯关闭为白色闪电，拍照按钮为白色快门圆钮。
+- 闪光灯按钮按真实开关状态切换开/关图标，拍照按钮使用新的快门图标。
+- 原始参考图自带棋盘格背景，未直接打入 UI；已重新绘制为透明背景小图标，避免运行时出现白底/棋盘格。
+- 拍照、闪光灯、完成、返回等交互逻辑保持不变。
+
+验证建议：
+
+- 闪光灯关闭时，右上角应显示白色闪电图标。
+- 打开闪光灯后，右上角应切换为黄色发光闪电图标。
+- 底部拍照按钮应显示白色快门圆钮，点击拍照逻辑保持正常。
+## v1.4.0 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.4.0`
+- `releases/AiDetectPlugin-v1.4.0.zip`
+
+变更内容：
+
+- 按最新设计图重做原生相机页顶部区域：全宽深色半透明标题栏、左侧返回图标、右侧闪光灯图标、下方三段状态栏。
+- 去掉画面中部“当前状态 / 检测目标 / 置信度”等检测信息卡片展示，仅保留顶部状态标签与检测框绘制。
+- 底部区域按设计图调整为两层结构：已拍缩略图横向区域 + 底部操作栏。
+- 接入用户提供的“已拍区域照片图标_深色底.png”作为底部已拍区域图标资源。
+- 返回、闪光灯、拍照、完成按钮改用 Android vector drawable 图标，避免不同设备 emoji 字体缺失导致图标不显示。
+- 缩略图卡片样式放大并强化“合格 / 不合格”底部色条，拍照逻辑、模型加载逻辑、uni-app 调用方式保持不变。
+
+验证建议：
+
+- 进入原生拍照页后，中间不应再出现当前状态卡片或检测信息卡片。
+- 顶部应接近设计图：返回图标、居中标题、闪光灯图标、三段状态标签。
+- 未拍照时不显示缩略图区域；拍照后出现横向缩略图卡片。
+- 底部左侧应显示提供的已拍图标，中间拍照按钮、右侧完成按钮功能保持正常。
+## v1.3.9 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.9`
+- `releases/AiDetectPlugin-v1.3.9.zip`
+
+变更内容：
+
+- 去除宿主系统标题栏，避免页面最顶部额外显示 `安检拍照识别` title。
+- 未拍照时隐藏已拍缩略图区域，不再展示空的缩略图卡片。
+- 返回、闪光灯、拍照按钮改为图标化显示：返回 `‹`、闪光灯 `⚡`、拍照 `📷`。
+- 重新收敛相机页视觉样式：深色玻璃面板、紧凑顶部栏、轻量状态标签、下方操作卡片。
+- 同步更新 XML 布局和 Java fallback 布局，保持正常布局与兜底布局视觉一致。
+
+验证建议：
+
+- 页面顶部不应再出现系统标题栏，只保留相机页内自定义顶部栏。
+- 未拍照时不应显示缩略图空区域；拍照后再出现横向缩略图。
+- 返回、闪光灯、拍照按钮应显示为图标样式，功能保持不变。
+## v1.3.8 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.8`
+- `releases/AiDetectPlugin-v1.3.8.zip`
+
+变更内容：
+
+- 按 UI 设计图调整原生相机页样式：顶部标题/闪光灯按钮、状态标签区域、当前状态卡、已拍缩略图区、底部操作区。
+- 去除画面中间的固定识别框 UI，不再绘制中央导引框；保留检测结果框绘制能力。
+- 状态标签改为半透明底色 + 彩色描边：绿色通过、蓝色检测中、红/橙色不通过。
+- 底部操作区改为卡片式布局：左侧已拍数量与上限，中间圆形拍照/继续按钮，右侧完成按钮。
+- 缩略图改为更紧凑的横向卡片，并保留合格/不合格色块标签。
+
+验证建议：
+
+- 相机预览中不应再看到固定的中间识别框。
+- 顶部三枚状态标签、当前状态卡、缩略图区域、底部拍照/完成区域应接近设计图布局。
+## v1.3.7 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.7`
+- `releases/AiDetectPlugin-v1.3.7.zip`
+
+变更内容：
+
+- 修复 `activity_camera_detect.xml` 加载 `DetectOverlayView` 时的真实根因：补齐 `DetectOverlayView(Context, AttributeSet)` 与三参构造方法。
+- 保留 `v1.3.6` 的纯 Java 动态布局 fallback 作为兜底，但正常情况下应优先加载 XML 布局。
+
+验证建议：
+
+- 重新制作自定义基座后，logcat 应出现 `DetectActivity XML layout loaded`，不应再出现 `DetectActivity XML layout failed`。
+## v1.3.6 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.6`
+- `releases/AiDetectPlugin-v1.3.6.zip`
+
+变更内容：
+
+- 修复 `DetectActivity` 启动阶段仍可能因 XML 布局膨胀失败导致宿主闪退的问题：XML 加载失败时自动切换到纯 Java 动态布局。
+- 增加启动阶段诊断日志：`onCreate begin`、`XML layout loaded`、`fallback layout loaded`、`bindViews ready`、`onCreate end`，便于从 logcat 精确定位后续问题。
+- 启动异常改为捕获后通过插件回调返回 `CAMERA_BIND_FAILED`，并关闭检测页，避免直接带崩 uni-app 宿主。
+- 修正 `activity_camera_detect.xml` 中文文案编码，避免 XML 正常加载时页面文字乱码。
+
+验证建议：
+
+- 使用 `v1.3.6` 重新制作自定义基座后，优先检查 logcat 是否出现 `DetectActivity onCreate begin` 及后续启动阶段日志。
+- 如果仍退出，请同时提供 `AiDetectPlugin` 与 `AndroidRuntime FATAL EXCEPTION` 附近日志。
+## v1.3.5 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.5`
+- `releases/AiDetectPlugin-v1.3.5.zip`
+
+变更内容：
+
+- 修复部分 uni-app 自定义基座打开 `DetectActivity` 后立即闪退的兼容风险：移除布局中对 `androidx.recyclerview.widget.RecyclerView` 的直接引用。
+- 底部已拍照片缩略图改为系统 `HorizontalScrollView + LinearLayout` 动态渲染，继续保留序号、缩略图、合格/不合格标签。
+- 移除 `androidx.recyclerview:recyclerview:1.3.2` 依赖声明，降低宿主集成新增依赖的风险。
+- `package.json` 版本更新为 `1.3.5`，uni-app 调用方式仍为 `uni.requireNativePlugin('AiDetectPlugin')`。
+
+注意事项：
+
+- 建议使用本版本替代 `v1.3.4` 发布包重新制作自定义基座，并用相同 `startDetect` 参数验证打开相机页不再闪退。
+## v1.3.4 - 2026-06-29
+
+发布包：
+
+- `releases/AiDetectPlugin-v1.3.4`
+- `releases/AiDetectPlugin-v1.3.4.zip`
+
+变更内容：
+
+- 摄像头检测页 UI 调整为安检拍照识别风格：新增顶部状态标签、当前状态卡片、中间识别框和底部拍照操作区。
+- 新增 CameraX 闪光灯开关；设备不支持闪光灯时按钮置灰并提示。
+- 拍照逻辑从“拍完即返回”扩展为“每点一次保存一张，保存后重新推理，加入已拍列表，点击完成后统一返回多图结果”。
+- 新增已拍照片统计、最多 10 张限制、横向缩略图列表和合格/不合格标签。
+- 新增 `CapturedPhoto`、`ThumbnailAdapter`、`activity_camera_detect.xml`、`item_captured_photo.xml`。
+- `JsonUtils` 新增多图完成返回 `{ code: 0, message: "success", mode: "multi", total, images }`，并保留最后一张的 `path/imagePath/result` 兼容字段；取消返回 `{ code: 1, message: "cancel" }`。
+- 新增依赖 `androidx.recyclerview:recyclerview:1.3.2`，已同步到 Android library 与 uni-app 原生插件依赖声明。
+
+注意事项：
+
+- 运行时插件 id 仍为 `AiDetectPlugin`，uni-app 侧继续使用 `uni.requireNativePlugin('AiDetectPlugin')`。
+- 离线 Android 打包工程如果直接引入本地 AAR，需要同步声明 `nativeplugins/AiDetectPlugin/package.json` 里的新增 RecyclerView 依赖。
+
 ## v1.3.3 - 2026-06-25
 
 发布包：

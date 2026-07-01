@@ -62,6 +62,7 @@ public final class DetectCallbackManager {
         JSONObject result = new JSONObject();
         result.put("success", visionResult.success);
         result.put("type", "detect_result");
+        result.put("detectMode", DetectConfig.snapshot().detectModeValue());
         result.put("modelType", visionResult.modelType);
         result.put("engine", visionResult.engine);
         result.put("modelName", visionResult.modelName);

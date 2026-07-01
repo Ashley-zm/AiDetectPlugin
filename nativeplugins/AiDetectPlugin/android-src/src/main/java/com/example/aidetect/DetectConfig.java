@@ -30,10 +30,17 @@ public final class DetectConfig {
     private static final int DEFAULT_CALLBACK_INTERVAL = 500;
     private static final boolean DEFAULT_USE_GPU = false;
     private static final String DEFAULT_MODEL_ARCH = "yolov8";
+    private static final String DEFAULT_CAPTURE_MODE = "single";
 
     private static DetectConfig current = defaults();
 
+    /**
+     * 兼容旧字段：FULL_PIPELINE / QUALITY_ONLY 为 true，其余为 false。
+     * 新代码优先使用 detectMode 和下面的 usesXxx 方法。
+     */
     public final boolean pipelineMode;
+    public final DetectMode detectMode;
+    public final String captureMode;
     public final ModelConfig targetModelConfig;
     public final String modelType;
     public final String engine;
@@ -61,13 +68,16 @@ public final class DetectConfig {
     public final Set<String> drawLabels;
 
     private DetectConfig(
-            boolean pipelineMode,
+            DetectMode detectMode,
+            String captureMode,
             ModelConfig targetModelConfig,
             int detectInterval,
             int callbackInterval,
             Set<String> drawLabels
     ) {
-        this.pipelineMode = pipelineMode;
+        this.detectMode = detectMode == null ? DetectMode.TARGET_ONLY : detectMode;
+        this.captureMode = normalizeCaptureMode(captureMode);
+        this.pipelineMode = this.detectMode.usesQualityPipeline();
         this.targetModelConfig = targetModelConfig;
         ModelConfig activeModel = targetModelConfig == null ? defaultTargetModel() : targetModelConfig;
         this.modelType = activeModel.modelType;
@@ -97,21 +107,24 @@ public final class DetectConfig {
             return;
         }
 
-        boolean pipelineMode = ModelConfig.getBoolean(options, "pipelineMode", false);
+        boolean legacyPipelineMode = ModelConfig.getBoolean(options, "pipelineMode", false);
+        DetectMode detectMode = DetectMode.fromOptions(options.getString("detectMode"), legacyPipelineMode);
+        String captureMode = ModelConfig.getString(options, "captureMode", DEFAULT_CAPTURE_MODE);
         int detectInterval = ModelConfig.getInt(options, "detectInterval", DEFAULT_DETECT_INTERVAL);
         int callbackInterval = ModelConfig.getInt(options, "callbackInterval", DEFAULT_CALLBACK_INTERVAL);
         Set<String> drawLabels = parseLabels(options.getString("labels"));
         JSONObject targetOptions = options.getJSONObject("targetModel");
-        ModelConfig targetModelConfig;
-        if (targetOptions != null) {
-            targetModelConfig = ModelConfig.fromJson(targetOptions, defaultTargetModel());
-        } else if (pipelineMode) {
-            targetModelConfig = null;
-        } else {
-            targetModelConfig = ModelConfig.fromJson(options, defaultTargetModel());
+
+        ModelConfig targetModelConfig = null;
+        if (detectMode.usesTargetDetection()) {
+            if (targetOptions != null) {
+                targetModelConfig = ModelConfig.fromJson(targetOptions, defaultTargetModel());
+            } else if (detectMode == DetectMode.TARGET_ONLY) {
+                targetModelConfig = ModelConfig.fromJson(options, defaultTargetModel());
+            }
         }
 
-        current = new DetectConfig(pipelineMode, targetModelConfig, detectInterval, callbackInterval, drawLabels);
+        current = new DetectConfig(detectMode, captureMode, targetModelConfig, detectInterval, callbackInterval, drawLabels);
     }
 
     public static synchronized DetectConfig snapshot() {
@@ -119,13 +132,53 @@ public final class DetectConfig {
     }
 
     public static DetectConfig fromModelConfig(ModelConfig modelConfig) {
-        return new DetectConfig(false, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
     }
 
     public void validateForStart() throws DetectException {
-        if (pipelineMode && targetModelConfig == null) {
+        if (usesTargetDetection() && targetModelConfig == null) {
             throw new DetectException(DetectErrorCode.TARGET_MODEL_MISSING, "targetModel 不能为空");
         }
+    }
+
+    public boolean isPhotoOnly() {
+        return detectMode == DetectMode.PHOTO_ONLY;
+    }
+
+    public boolean isQualityOnly() {
+        return detectMode == DetectMode.QUALITY_ONLY;
+    }
+
+    public boolean usesRealtimeAnalysis() {
+        return detectMode.usesRealtimeAnalysis();
+    }
+
+    public boolean usesQualityPipeline() {
+        return detectMode.usesQualityPipeline();
+    }
+
+    public boolean usesTargetDetection() {
+        return detectMode.usesTargetDetection();
+    }
+
+    public boolean shouldShowQualityChips() {
+        return detectMode.shouldShowQualityChips();
+    }
+
+    public boolean shouldShowTargetChip() {
+        return detectMode.shouldShowTargetChip();
+    }
+
+    public String detectModeValue() {
+        return detectMode.value;
+    }
+
+    public boolean isMultiCapture() {
+        return "multi".equals(captureMode);
+    }
+
+    public String captureModeValue() {
+        return captureMode;
     }
 
     public static void setCallback(UniJSCallback uniCallback) {
@@ -156,9 +209,19 @@ public final class DetectConfig {
     }
 
     private static DetectConfig defaults() {
-        return new DetectConfig(false, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
     }
 
+    private static String normalizeCaptureMode(String raw) {
+        if (raw == null) {
+            return DEFAULT_CAPTURE_MODE;
+        }
+        String value = raw.trim().toLowerCase(Locale.US);
+        if ("multi".equals(value) || "multiple".equals(value) || "batch".equals(value)) {
+            return "multi";
+        }
+        return DEFAULT_CAPTURE_MODE;
+    }
     /**
      * 解析 labels 入参：以英文逗号分隔的标签字符串 → 去空白、去空项、小写去重的不可变集合。
      * 入参为 null/空字符串时返回空集合（表示不过滤）。

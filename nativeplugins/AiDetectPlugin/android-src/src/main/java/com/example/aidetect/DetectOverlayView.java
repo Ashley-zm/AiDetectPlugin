@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.util.AttributeSet;
 import android.view.View;
 
 import androidx.annotation.Nullable;
@@ -20,21 +21,38 @@ public class DetectOverlayView extends View {
     private final Paint labelBackgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF labelBackground = new RectF();
     private List<DetectionBox> boxes = Collections.emptyList();
+    private int guideColor = 0xFF2563EB;
 
     public DetectOverlayView(Context context) {
         super(context);
-        setWillNotDraw(false);
+        initPaints();
+    }
 
+    public DetectOverlayView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        initPaints();
+    }
+
+    public DetectOverlayView(Context context, AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        initPaints();
+    }
+
+    private void initPaints() {
+        setWillNotDraw(false);
         boxPaint.setStyle(Paint.Style.STROKE);
         boxPaint.setStrokeWidth(dp(2.5F));
         boxPaint.setColor(0xFF22C55E);
-
         textPaint.setStyle(Paint.Style.FILL);
         textPaint.setColor(0xFFFFFFFF);
         textPaint.setTextSize(dp(13F));
-
         labelBackgroundPaint.setStyle(Paint.Style.FILL);
         labelBackgroundPaint.setColor(0xCC111827);
+    }
+
+    public void setGuideColor(int color) {
+        guideColor = color;
+        invalidate();
     }
 
     public void setResults(@Nullable List<DetectionBox> boxes) {
@@ -49,7 +67,7 @@ public class DetectOverlayView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-
+        boxPaint.setColor(guideColor);
         for (DetectionBox box : boxes) {
             canvas.drawRect(box.left, box.top, box.right, box.bottom, boxPaint);
             drawLabel(canvas, box);
@@ -67,7 +85,6 @@ public class DetectOverlayView extends View {
         float labelTop = Math.max(0F, box.top - textHeight - paddingV * 2F);
         float labelRight = Math.min(getWidth(), labelLeft + textWidth + paddingH * 2F);
         float labelBottom = labelTop + textHeight + paddingV * 2F;
-
         labelBackground.set(labelLeft, labelTop, labelRight, labelBottom);
         canvas.drawRect(labelBackground, labelBackgroundPaint);
         canvas.drawText(label, labelLeft + paddingH, labelBottom - paddingV - metrics.descent, textPaint);

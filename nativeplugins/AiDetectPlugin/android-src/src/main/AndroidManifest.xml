@@ -5,7 +5,9 @@
     <application>
         <activity
             android:name="com.example.aidetect.DetectActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/AiDetectPluginCameraTheme" />
     </application>
 
 </manifest>

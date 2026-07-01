@@ -11,6 +11,7 @@
 
       <text class="status">{{ status }}</text>
       <text v-if="snapshotPath" class="snapshot-path">照片路径：{{ snapshotPath }}</text>
+      <text v-if="capturedImages.length" class="snapshot-path">已返回 {{ capturedImages.length }} 张照片</text>
 
       <view class="summary">
         <view class="summary-item">
@@ -62,7 +63,8 @@ export default {
       maxScore: 0,
       boxes: [],
       lastResultAt: 0,
-      snapshotPath: ''
+      snapshotPath: '',
+      capturedImages: []
     }
   },
   computed: {
@@ -168,7 +170,7 @@ export default {
           console.log('AiDetectPlugin.takeSnapshot result:', snapshotRes)
           if (snapshotRes && snapshotRes.success) {
             this.snapshotPath = snapshotRes.imagePath || ''
-            this.status = '拍照完成，检测页面已关闭'
+            this.status = '拍照完成，可继续在原生页面拍摄或点完成返回'
           } else {
             this.status = snapshotRes && snapshotRes.message ? `拍照失败：${snapshotRes.message}` : '拍照失败'
           }
@@ -219,13 +221,32 @@ export default {
       }
 
       if (res.type === 'snapshot') {
+        if (Array.isArray(res.images)) {
+          this.capturedImages = res.images
+          const lastImage = res.images[res.images.length - 1] || {}
+          this.snapshotPath = lastImage.path || res.imagePath || res.path || ''
+          this.hasTarget = lastImage.result === 'pass'
+          this.boxes = []
+          this.boxCount = res.images.length
+          this.maxScore = Number(lastImage.confidence) || 0
+          this.status = `完成拍摄，返回 ${res.images.length} 张照片`
+          this.resultText = JSON.stringify(res, null, 2)
+          return
+        }
+
         const boxes = Array.isArray(res.boxes) ? res.boxes : []
         this.snapshotPath = res.imagePath || ''
         this.hasTarget = !!res.hasTarget
         this.boxes = boxes
         this.boxCount = boxes.length
         this.maxScore = boxes.reduce((max, box) => Math.max(max, Number(box.score) || 0), 0)
-        this.status = res.message || '拍照完成，检测页面已关闭'
+        this.status = res.message || '拍照完成'
+        this.resultText = JSON.stringify(res, null, 2)
+        return
+      }
+
+      if (res.type === 'cancel' || res.code === 1) {
+        this.status = '用户取消拍摄'
         this.resultText = JSON.stringify(res, null, 2)
         return
       }
@@ -259,6 +280,7 @@ export default {
       this.boxes = []
       this.lastResultAt = 0
       this.snapshotPath = ''
+      this.capturedImages = []
       this.resultText = ''
     },
 
@@ -427,3 +449,5 @@ export default {
   word-break: break-all;
 }
 </style>
+
+

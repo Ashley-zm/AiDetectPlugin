@@ -3,6 +3,7 @@ package com.example.aidetect;
 public enum PipelineStatus {
     FUZZY("画面模糊，请重新拍摄"),
     REMAKE("疑似翻拍，请重新拍摄"),
+    QUALITY_PASS("画面清晰，可拍照"),
     NO_TARGET("未检测到目标"),
     TARGET_FOUND("检测通过"),
     ERROR("检测异常，请重试");
