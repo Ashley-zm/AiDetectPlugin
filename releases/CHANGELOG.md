@@ -10,6 +10,18 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.6.0 - 2026-10-16
+
+- 新增 photoWatermark.enabled（默认 false），单拍/多拍、四种检测模式支持图片右下角永久时间水印。
+- 发起拍照时冻结设备时间和时区，格式 yyyy-MM-dd HH:mm:ss；白色粗体、黑色阴影，按图片尺寸适配。
+- 先压缩、复检无水印图，再绘制水印；仅开启水印时也校正复检与成品方向，避免文字参与 AI 判定。
+- 与压缩开关独立；关闭压缩或小图跳过仍加水印；最终大小与软目标状态重新计算。
+- 增加 watermarked / watermarkStatus / watermarkText / captureTimestamp / captureTime / captureTimeZone / intermediatePath 回调字段。
+- 原图保留遵循既有压缩策略；删除中间图、页面取消及多拍重编号均管理水印文件和元数据；失败回退可用图片。
+- 补充 README 调用示例、DEVELOPMENT 第 17 节接口约定与验收清单，以及时间配置单元测试和设备图片测试用例。
+- 发布归档：releases/AiDetectPlugin-v1.6.0/ 及对应 ZIP；不覆盖 v1.5.0 压缩基线。
+- 真机验收待执行；编译通过不代表图片效果、性能与相机交互已通过真机验证。
+
 ## v1.5.0 - 2026-10-16
 
 - 将此前测试构建中的拍照压缩与原图保留配置整理为独立正式版本，替代版本号仍为 1.4.4 的测试包。

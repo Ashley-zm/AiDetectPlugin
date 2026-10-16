@@ -807,11 +807,12 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         updateCaptureControls();
 
         ImageCapture.OutputFileOptions outputOptions = new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+        final PhotoCaptureTime captureTime = PhotoCaptureTime.now();
         try {
             currentImageCapture.takePicture(outputOptions, analysisExecutor, new ImageCapture.OnImageSavedCallback() {
                 @Override
                 public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
-                    handlePhotoSaved(photoFile, callback);
+                    handlePhotoSaved(photoFile, callback, captureTime);
                 }
 
                 @Override
@@ -846,15 +847,15 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     }
 
     /** 拍照文件保存成功后执行复检，并在主线程刷新缩略图、数量、提示文案和回调。 */
-    private void handlePhotoSaved(@NonNull File photoFile, UniJSCallback callback) {
+    private void handlePhotoSaved(@NonNull File photoFile, UniJSCallback callback, PhotoCaptureTime captureTime) {
         String imagePath = photoFile.getAbsolutePath();
         PhotoCompressor.Result processedPhoto = null;
         try {
-            PhotoCompressor.Result imageInfo = PhotoCompressor.process(photoFile, activeConfig().photoCompression);
-            processedPhoto = imageInfo;
-            imagePath = imageInfo.file.getAbsolutePath();
+            PhotoCompressor.Result compressedPhoto = PhotoCompressor.process(photoFile, activeConfig().photoCompression);
+            processedPhoto = compressedPhoto;
+            imagePath = compressedPhoto.file.getAbsolutePath();
             if (released) {
-                deleteProcessedPhoto(imageInfo);
+                deleteProcessedPhoto(compressedPhoto);
                 return;
             }
             JSONObject singleResult;
@@ -873,6 +874,13 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                 singleResult = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis(), config.detectModeValue());
                 capturedPhoto = capturedPhotoFromVision(imagePath, visionResult);
             }
+            // Run inference on the unwatermarked image; timestamp text must not affect the models.
+            if (released) { deleteProcessedPhoto(compressedPhoto); return; }
+            final PhotoCompressor.Result imageInfo = PhotoWatermarker.process(
+                    compressedPhoto, config.photoWatermark, config.photoCompression, captureTime);
+            processedPhoto = imageInfo;
+            imagePath = imageInfo.file.getAbsolutePath();
+            singleResult.put("imagePath", imagePath);
             imageInfo.putInto(singleResult);
             final CapturedPhoto completedPhoto = capturedPhoto.withImageInfo(imageInfo);
             if (!multiCaptureMode) {
@@ -914,13 +922,19 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             JSONObject error = JsonUtils.snapshotError(DetectErrorCode.SNAPSHOT_INFER_FAILED,
                     "拍照成功，但照片处理或复检失败：" + messageOf(throwable), imagePath, true);
             if (processedPhoto != null) processedPhoto.putInto(error);
+            error.put("captureTimestamp", captureTime.timestamp);
+            error.put("captureTime", captureTime.time);
+            error.put("captureTimeZone", captureTime.timeZone);
+            if (activeConfig().photoWatermark.enabled && (processedPhoto == null || processedPhoto.captureTime == null)) {
+                error.put("watermarkStatus", "not_processed");
+            }
             notifySnapshotCallbackOnly(callback, error);
             mainHandler.post(() -> updateCaptureControls());
         }
     }
 
     private PipelineResult inferSnapshotPipeline(String imagePath) throws DetectException {
-        Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+        Bitmap bitmap = decodeSnapshotImage(imagePath);
         if (bitmap == null) {
             throw new DetectException(DetectErrorCode.SNAPSHOT_IMAGE_DECODE_FAILED, "拍照图片解码失败：" + imagePath);
         }
@@ -939,7 +953,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     }
 
     private VisionResult inferSnapshotImage(String imagePath) throws DetectException {
-        Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
+        Bitmap bitmap = decodeSnapshotImage(imagePath);
         if (bitmap == null) {
             throw new DetectException(DetectErrorCode.SNAPSHOT_IMAGE_DECODE_FAILED, "拍照图片解码失败：" + imagePath);
         }
@@ -958,6 +972,16 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             if (!bitmap.isRecycled()) {
                 bitmap.recycle();
             }
+        }
+    }
+
+    private Bitmap decodeSnapshotImage(String imagePath) throws DetectException {
+        if (!activeConfig().photoWatermark.enabled) return BitmapFactory.decodeFile(imagePath);
+        try {
+            return PhotoWatermarker.decodeOriented(imagePath, false);
+        } catch (java.io.IOException | RuntimeException | OutOfMemoryError error) {
+            throw new DetectException(DetectErrorCode.SNAPSHOT_IMAGE_DECODE_FAILED,
+                    "拍照图片方向校正或解码失败：" + messageOf(error), error);
         }
     }
 
@@ -1130,6 +1154,9 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void deleteProcessedPhoto(PhotoCompressor.Result info) {
         deletePhotoFileQuietly(info.file.getAbsolutePath());
         if (!info.original.equals(info.file)) deletePhotoFileQuietly(info.original.getAbsolutePath());
+        if (!info.inferenceFile.equals(info.file) && !info.inferenceFile.equals(info.original)) {
+            deletePhotoFileQuietly(info.inferenceFile.getAbsolutePath());
+        }
     }
 
     private void deleteCapturedPhotoFiles(CapturedPhoto photo) {

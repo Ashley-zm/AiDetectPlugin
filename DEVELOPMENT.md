@@ -2,7 +2,7 @@
 
 uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCNN** 的实时图像质量检测与目标检测能力。
 
-> 适用版本：`v1.5.0`；第 16 节包含压缩功能与历史测试构建记录。
+> 适用版本：`v1.6.0`；第 16 节为压缩功能，第 17 节为时间水印。
 > 运行时插件 id 始终为 `AiDetectPlugin`（`uni.requireNativePlugin('AiDetectPlugin')`），版本号仅用于发布归档命名。
 
 ---
@@ -25,6 +25,7 @@ uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCN
 14. [开发规范](#14-开发规范)
 15. [调试与排错](#15-调试与排错)
 16. [拍照后压缩与原图保留](#16-拍照后压缩与原图保留)
+17. [拍照时间水印](#17-拍照时间水印)
 
 ---
 
@@ -706,7 +707,7 @@ adb logcat -s AiDetectPlugin
 | `TARGET_MODEL_MISSING` | `full_pipeline` 未传 `targetModel`，或 `target_only` 未提供可用目标模型配置 |
 | `FUZZY/REMAKE_LABELS_INVALID` | 质量模型 `labels.txt` 不是恰好 `0`、`1` 两行 |
 | 检测框位置偏移 | 核对 `inputSize`、`rotationDegrees` 矫正、`CoordinateUtils` 的源/目标尺寸 |
-| 拍照图片方向不对 | 在 `inferSnapshotImage` 推理前补 Exif 旋转矫正（代码已留 TODO） |
+| 拍照图片方向不对 | 开启压缩时由压缩步骤矫正；仅开启水印时，复检与水印绘制均按 EXIF 矫正；两者均关闭时保留旧行为 |
 | 回调收不到 | 确认用 `startDetect`（keep-alive）而非 `startDetectSync`；检查 `callbackInterval` 是否过大；多图最终结果需要点击原生页“完成” |
 | HBuilderX 云打包失败 | 核对 `minSdkVersion>=23`、CameraX 版本与 `compileSdk` 边界（见 CHANGELOG v1.2.3/v1.2.4） |
 
@@ -719,7 +720,7 @@ adb logcat -s AiDetectPlugin
 
 ### 16.1 实现流程与文件
 
-CameraX 保存 JPEG → `handlePhotoSaved` → `PhotoCompressor.process` → 复检最终文件（纯拍照跳过）→ 缩略图/列表 → 单拍或多拍回调。
+CameraX 保存 JPEG → `handlePhotoSaved` → `PhotoCompressor.process` → 复检无水印文件（纯拍照跳过）→ 可选 `PhotoWatermarker.process` → 缩略图/列表 → 单拍或多拍回调。水印关闭时复检文件即返回文件；开启后的区别见第 17 节。
 
 - `PhotoCompressionConfig.java`：不可变配置，使用现有配置解析方法并限制参数范围。
 - `PhotoCompressor.java`：读取尺寸、采样解码、等比例缩小、EXIF 2～8 方向/镜像校正、JPEG 有限次编码、检查输出尺寸、临时文件重命名；默认保留拍照原文件；显式 keepOriginal=false 时，输出验证成功后尝试删除原图。
@@ -754,7 +755,7 @@ ai.startDetect(options, callback)
 | minQuality | 70 | 限制到 1～quality；每次降低 5，最后一步落到最低质量 |
 | targetSizeKB | 1024 | 软目标，1KB=1024 字节，限制到 100～20480KB |
 
-普通无旋转照片同时满足尺寸和大小要求时跳过。EXIF 需要旋转/镜像时即使小图也重新编码。达到最低质量后停止，不为追求文件大小继续缩小图片。编码没有变小且原图尺寸与方向已符合要求时返回原图。输出 JPEG 不复制原图 EXIF（如 GPS、拍摄时间）；默认原图完整保留；keepOriginal=false 时成功输出后删除。复检针对最终文件，压缩造成的判定变化必须用真实业务样本验证，不能仅根据模型输入尺寸推断无损。
+普通无旋转照片同时满足尺寸和大小要求时跳过。EXIF 需要旋转/镜像时即使小图也重新编码。达到最低质量后停止，不为追求文件大小继续缩小图片。编码没有变小且原图尺寸与方向已符合要求时返回原图。输出 JPEG 不复制原图 EXIF（如 GPS、拍摄时间）；默认原图完整保留；keepOriginal=false 时成功输出后删除。未开启水印时复检针对最终文件；开启水印时复检针对添加文字前的文件。压缩造成的判定变化必须用真实业务样本验证，不能仅根据模型输入尺寸推断无损。
 
 ### 16.3 返回字段
 
@@ -849,3 +850,82 @@ photoCompression: {
 - 当前 AAR 与 releases/AiDetectPlugin-v1.5.0/android/AiDetectPlugin-release.aar 校验一致。
 - adb devices 无连接设备，图片运行测试和第 16.5 节真机验收未执行；不代表已完成设备兼容性验收。
 - 历史 1.4.4 归档保留不变；v1.5.0 为压缩功能基线，后续水印功能单独版本化。
+## 17. 拍照时间水印
+
+### 17.1 版本与行为
+
+v1.6.0 新增可选时间水印，默认关闭，无新增生产依赖。适用于 photo_only / target_only / quality_only / full_pipeline 及单拍、多拍、插件触发拍照。开启后在最终 JPEG 的右下角绘制时间，非 UI 叠层，上传或分享文件后水印仍存在。
+
+处理顺序：发起拍照时固定设备时间与时区 → CameraX 保存 → 可选压缩 → 无水印图片复检（纯拍照跳过）→ 可选水印 → 回调/缩略图。
+
+检测结果只描述加水印前的图像，不再保证与返回成品逐像素相同；水印不参与模型推理。启用水印且压缩关闭/失败/跳过时，复检和水印均按 EXIF 2～8 校正方向，输出为正向像素。水印关闭保留旧的复检行为。现有 boxes 坐标约定不变，不新增成品坐标转换。
+
+### 17.2 参数与样式
+
+```js
+photoWatermark: {
+  enabled: true // 默认 false；只支持此开关，不接收任意自定义文本
+}
+```
+
+- 格式固定 yyyy-MM-dd HH:mm:ss（例如 2026-10-16 11:30:45）。
+- 右下角白色粗体，黑色阴影；字号为短边的 3.5%，边距为短边的 2.5%，宽度不足时自动缩小文字。
+- 时间取发起 takePicture 时的系统时间，不是曝光硬件时间、落盘时间或复检结束时间。系统时间不准时水印也会不准。
+- 每张照片独立冻结时区与文本，后续处理或系统时区变化不改变已记录时间；不提供可信时间认证。
+- 无论压缩是否开启、是否跳过小图，水印开关均独立生效。
+- 压缩关闭时不主动缩小分辨率，水印 JPEG 质量为 95；开启时使用 photoCompression 的 quality / minQuality / targetSizeKB 有限次编码，目标仍为软限制。
+- JPEG 重编码可能改变细节和体积；不宣称无损。后台串行处理，异常和内存不足回退已有图；大像素照片需真机验证耗时与内存。
+
+### 17.3 回调字段
+
+单拍结果、多拍 images[] 和多拍顶层最后一张的兼容字段均包含：
+
+| 字段 | 含义 |
+| --- | --- |
+| imagePath / images[].path | 水印成功时为水印成品；关闭或失败时为压缩后的图片或原图 |
+| watermarkStatus | applied / disabled / failed；复检抛异常导致水印未执行时，snapshot_error 中为 not_processed |
+| watermarked | 是否成功写入水印；与 qualified 无关 |
+| watermarkText | 成功时实际绘制的时间文字；否则为空字符串 |
+| captureTimestamp | 发起拍照时记录的 Unix 毫秒时间 |
+| captureTime | 拍照时区下的 yyyy-MM-dd HH:mm:ss 文本，即计划绘制的文字 |
+| captureTimeZone | 拍照时设备时区 ID，例如 Asia/Shanghai |
+| fileSize / width / height | 最终实际交付文件的字节数及像素尺寸 |
+| compressionTargetMet | 最终文件是否满足配置的软体积目标；关闭压缩时仅为大小比较，未主动追求该目标 |
+| compressionStatus / compressed | 仅描述前置压缩步骤；只有水印时可为 disabled / false，不能据此判断图片是否被修改 |
+| intermediatePath | 水印成功后压缩中间图删除失败时的路径，否则为空；调用方需按保存周期清理 |
+
+旧 timestamp / time 仍保留原语义，水印时间请使用新增 capture* 字段。水印失败不改 success 或 qualified，不伪装为 applied；业务若强制水印，应检查 watermarkStatus。复检异常沿用 snapshot_error，保留照片元信息与拍摄时间，不继续添加水印。
+
+### 17.4 文件与生命周期
+
+- 不覆盖原图或复检输入。水印写入同目录 .tmp，完成尺寸及采样像素验证后重命名为 .jpg。
+- 压缩成功产生的中间 JPEG 在水印成功后尝试删除；删除失败返回 intermediatePath，并仍纳入页面删除清理。
+- 原图保留继续遵循 photoCompression.keepOriginal：只有前置压缩成功且显式 false 时才删除相机原图；压缩关闭、跳过、失败时仍保留原图，即使水印成功也不额外删除。
+- 水印失败保留压缩图或原图，清理未完成临时文件。水印输出不复制 EXIF（含 GPS/拍摄时间），可见拍摄时间直接写入像素。
+- 多拍删除、确认放弃、切回单拍、处理中关闭页面均清理本次记录的原图、成品和残留中间图；重新编号保留水印与拍摄时间信息。
+- 正常交付后的文件由业务端管理，页面正常关闭不删除。强杀进程不保证执行清理。
+
+### 17.5 代码与验证
+
+- PhotoWatermarkConfig：默认关闭配置；DetectConfig 解析 photoWatermark。
+- PhotoCaptureTime：在快门请求处冻结时间、时区和格式化文本。
+- PhotoWatermarker：方向校正、可修改位图绘字、JPEG 输出校验与失败回退；复检共用方向解码方法。
+- PhotoCompressor.Result：保留前置压缩状态并汇总水印成品信息；CapturedPhoto 与 JsonUtils 统一透传单/多拍结果。
+- PhotoWatermarkConfigTest：开关默认、与压缩独立、时区冻结、跨日多次拍照。
+- PhotoWatermarkChecks：接入现有 PhotoCompressionInstrumentation，验证关闭字节不变、像素水印、EXIF 2～8、最终元数据、单/多图路径、压缩与保留组合、小图跳过、失败/中断回退和临时文件清理。
+
+```powershell
+.\gradlew.bat :AiDetectPlugin:testReleaseUnitTest :AiDetectPlugin:compileDebugAndroidTestJavaWithJavac :AiDetectPlugin:assembleRelease
+# 有 Android 设备时，安装并运行同时包含压缩和水印图片用例的 runner：
+.\gradlew.bat :AiDetectPlugin:installDebugAndroidTest
+adb shell am instrument -w com.example.aidetect.test/com.example.aidetect.PhotoCompressionInstrumentation
+```
+
+真机验收：四种检测模式；单拍与连续 10 张多拍；横竖持机；白/黑/复杂背景的文字可读性；压缩开关及 keepOriginal 组合；删除/重编号/取消/处理中退出；对照照片验证 AI 结果不受绘字干扰；记录大图耗时、内存与最终体积；核对设备时间与水印一致。
+### 17.6 构建验证记录（2026-10-16）
+
+- 标准 testReleaseUnitTest：压缩配置 4 项 + 水印/时间 3 项，共 7 项通过，0 失败。
+- compileDebugAndroidTestJavaWithJavac 通过，新增图片用例已编译；adb devices 无连接设备，未执行设备测试与相机真机验收。
+- assembleRelease 通过，产物包含 arm64-v8a / armeabi-v7a 原生库及 PhotoWatermarker / PhotoWatermarkConfig / PhotoCaptureTime 类。
+- 已同步插件目录 AAR、归档 v1.6.0 AAR 与 ZIP；最终源码修正后重新构建并同步，三处 AAR SHA-256 一致：5A27EB4A2075AFD75D4006712302A51B23CAEC2CD40F4A9ACB74B0DF13BDAEA5。
+- 压缩基线 v1.5.0 已提交并推送（fd29b1a）；水印版本与其分开记录，历史包未覆盖。

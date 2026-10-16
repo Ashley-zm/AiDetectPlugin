@@ -46,7 +46,7 @@ public class CapturedPhoto {
     }
 
     public CapturedPhoto withImageInfo(PhotoCompressor.Result info) {
-        return new CapturedPhoto(index, path, result, target, confidence, fuzzyLabel, remakeLabel,
+        return new CapturedPhoto(index, info.file.getAbsolutePath(), result, target, confidence, fuzzyLabel, remakeLabel,
                 detectMode, timestamp, time, info);
     }
 

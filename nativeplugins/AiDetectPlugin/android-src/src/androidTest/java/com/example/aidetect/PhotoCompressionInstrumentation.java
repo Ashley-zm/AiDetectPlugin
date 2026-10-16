@@ -22,7 +22,8 @@ public class PhotoCompressionInstrumentation extends Instrumentation {
             directory = new File(getContext().getCacheDir(), "compression-tests-" + System.nanoTime());
             check(directory.mkdirs(), "test directory");
             runChecks();
-            result.putString("stream", "PASS: disabled, skipped, resize, original preservation, EXIF 2-8, soft target, metadata, failure, temporary cleanup\n");
+            PhotoWatermarkChecks.run(directory);
+            result.putString("stream", "PASS: compression and watermark; disabled, skipped, resize, retention, EXIF 2-8, time, pixels, metadata, failure, interruption, temporary cleanup\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             result.putString("stream", "FAIL: " + android.util.Log.getStackTraceString(error));

@@ -42,6 +42,7 @@ public final class DetectConfig {
     public final DetectMode detectMode;
     public final String captureMode;
     public final PhotoCompressionConfig photoCompression;
+    public final PhotoWatermarkConfig photoWatermark;
     public final ModelConfig targetModelConfig;
     public final String modelType;
     public final String engine;
@@ -75,9 +76,11 @@ public final class DetectConfig {
             int detectInterval,
             int callbackInterval,
             Set<String> drawLabels,
-            PhotoCompressionConfig photoCompression
+            PhotoCompressionConfig photoCompression,
+            PhotoWatermarkConfig photoWatermark
     ) {
         this.photoCompression = photoCompression;
+        this.photoWatermark = photoWatermark;
         this.detectMode = detectMode == null ? DetectMode.TARGET_ONLY : detectMode;
         this.captureMode = normalizeCaptureMode(captureMode);
         this.pipelineMode = this.detectMode.usesQualityPipeline();
@@ -127,7 +130,9 @@ public final class DetectConfig {
             }
         }
 
-        current = new DetectConfig(detectMode, captureMode, targetModelConfig, detectInterval, callbackInterval, drawLabels, PhotoCompressionConfig.fromJson(options.getJSONObject("photoCompression")));
+        current = new DetectConfig(detectMode, captureMode, targetModelConfig, detectInterval, callbackInterval, drawLabels,
+                PhotoCompressionConfig.fromJson(options.getJSONObject("photoCompression")),
+                PhotoWatermarkConfig.fromJson(options.getJSONObject("photoWatermark")));
     }
 
     public static synchronized DetectConfig snapshot() {
@@ -135,7 +140,7 @@ public final class DetectConfig {
     }
 
     public static DetectConfig fromModelConfig(ModelConfig modelConfig) {
-        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null));
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null), PhotoWatermarkConfig.fromJson(null));
     }
 
     public void validateForStart() throws DetectException {
@@ -212,7 +217,7 @@ public final class DetectConfig {
     }
 
     private static DetectConfig defaults() {
-        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null));
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null), PhotoWatermarkConfig.fromJson(null));
     }
 
     private static String normalizeCaptureMode(String raw) {
