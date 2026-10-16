@@ -214,6 +214,7 @@ public final class JsonUtils {
             result.put("detectMode", safeDetectMode(lastPhoto.detectMode));
             result.put("captureMode", "multi");
             result.put("path", lastPhoto.path);
+            if (lastPhoto.imageInfo != null) lastPhoto.imageInfo.putInto(result);
             result.put("imagePath", lastPhoto.path);
             result.put("result", lastPhoto.result);
             result.put("qualified", lastPhoto.isPass());
@@ -245,6 +246,7 @@ public final class JsonUtils {
     private static JSONObject capturedPhotoToJson(CapturedPhoto photo) {
         JSONObject item = new JSONObject();
         item.put("index", photo.index);
+        if (photo.imageInfo != null) photo.imageInfo.putInto(item);
         item.put("path", photo.path);
         item.put("imagePath", photo.path);
         item.put("detectMode", safeDetectMode(photo.detectMode));

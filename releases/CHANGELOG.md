@@ -10,6 +10,35 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.5.0 - 2026-10-16
+
+- 将此前测试构建中的拍照压缩与原图保留配置整理为独立正式版本，替代版本号仍为 1.4.4 的测试包。
+- 新增 photoCompression：默认关闭；长边 2048px、JPEG 质量 85、最低质量 70、目标 1024KB（软目标）。
+- 支持 EXIF 2～8 旋转/镜像校正、小图跳过、有限次编码、输出验证与异常回退原图。
+- keepOriginal 默认 true；设为 false 时仅在压缩成品验证成功后删除原图；通过 originalRetained 如实反馈。
+- 单拍、多拍及四种检测模式共用压缩后复检链路，返回最终文件路径、大小、尺寸、压缩状态及原图信息。
+- 多拍删除、放弃、切回单拍统一清理照片及副本；页面关闭后不追加迟到结果。
+- 发布归档：releases/AiDetectPlugin-v1.5.0/ 及对应 ZIP；历史版本不覆盖。
+- 真机相机交互、性能及识别效果仍需按 DEVELOPMENT 第 16.5 节验收。
+
+## 测试构建 - 2026-09-15
+
+- 完整 assembleRelease 成功，测试 AAR 已同步到 nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar；4 项配置测试通过。版本元数据仍为 1.4.4，历史发布归档不变。
+
+- 新增 photoCompression.keepOriginal（默认 true），显式 false 且压缩输出验证成功时删除原图。
+- 回传 originalRetained，删除成功时 originalPath 为空；跳过或失败仍保留原图。
+- 新增配置和设备验证用例；本次用于真机测试，不覆盖历史版本归档。
+
+## 未发布 - 2026-09-11
+
+- 新增可配置拍照后压缩：默认关闭，默认长边 2048px / JPEG 质量 85 / 最低 70 / 目标 1024KB（软目标）。
+- 使用采样解码、EXIF 方向/镜像校正与有限次编码；保留原图，失败回退原图，不改实时帧检测。
+- 单拍、多拍、纯拍照统一在照片复检前处理，检测与最终返回文件保持一致。
+- 增加 originalPath、originalSize、fileSize、width、height、compressed、compressionStatus、compressionTargetMet 回调字段。
+- 多拍删除、放弃和切回单拍清理原图及副本，重编号保留元信息；关闭后不追加迟到的照片结果。
+- 补充配置单元测试、Android 图片处理验证 runner、README 调用示例及 DEVELOPMENT 第 16 节开发记录和真机验收清单。
+- 本条为源码开发记录，不代表已发布新版本；不覆盖历史归档。
+
 ## v1.4.4 - 2026-07-01
 
 发布包：

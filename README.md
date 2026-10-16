@@ -3,7 +3,7 @@
 uni-app（DCloud HBuilderX）Android 原生插件，基于 **CameraX + NCNN** 提供原生拍照、实时图像质量检测与目标检测能力。
 
 - 运行时插件 id：`AiDetectPlugin` —— `uni.requireNativePlugin('AiDetectPlugin')`
-- 当前版本：`v1.4.4`
+- 当前版本：`v1.5.0`
 - 能力：纯拍照、YOLOv8 / YOLOv5 目标检测、ResNet18 质量判定（模糊 / 翻拍）、三段 Pipeline、实时帧检测、拍照保存后复检、默认单拍与多拍切换、多张连续拍照后统一返回、闪光灯控制
 
 ## 快速开始
@@ -93,3 +93,28 @@ releases/                              # 历史发布归档 + CHANGELOG
 ```
 
 产物同步到 `nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar` 后，在 HBuilderX 打 Android 自定义基座使用。脚本不会自动改 `package.json` 版本号或 `releases/CHANGELOG.md`，发版前请先手动改好版本、打包后补写变更记录。
+## 拍照后压缩（v1.5.0）
+
+支持在 `startDetect` 参数中传入 `photoCompression`。默认关闭以兼容既有调用；开启后在拍照复检之前压缩，单拍、多拍与纯拍照共用处理链路。
+
+```js
+ai.startDetect({
+  detectMode: 'photo_only',
+  photoCompression: {
+    enabled: true,
+    keepOriginal: true, // 调试保留；仅需要压缩图时设为 false
+    maxLongEdge: 2048,
+    quality: 85,
+    minQuality: 70,
+    targetSizeKB: 1024
+  }
+}, (res) => {
+  if (res.type === 'snapshot') {
+    console.log(res.imagePath, res.originalPath, res.fileSize, res.compressionStatus)
+  }
+})
+```
+
+`imagePath` / 多拍 `images[].path` 指向实际用于复检的最终文件；`keepOriginal` 默认 true；设为 false 且压缩成功时删除原图，`originalPath` 为空，`originalRetained=false`。跳过或失败时仍保留原图。1MB 是软目标，最低质量仍超标时返回实际文件并设置 `compressionTargetMet=false`，业务端应按上传限制决定后续处理。压缩失败回退原图并返回 `compressionStatus='failed'`。无需新增生产依赖。
+
+完整参数、原图清理约定及本次验证清单见 [DEVELOPMENT.md](DEVELOPMENT.md) 第 16 节。

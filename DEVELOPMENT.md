@@ -2,7 +2,7 @@
 
 uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCNN** 的实时图像质量检测与目标检测能力。
 
-> 适用版本：`v1.4.3`
+> 适用版本：`v1.5.0`；第 16 节包含压缩功能与历史测试构建记录。
 > 运行时插件 id 始终为 `AiDetectPlugin`（`uni.requireNativePlugin('AiDetectPlugin')`），版本号仅用于发布归档命名。
 
 ---
@@ -24,6 +24,7 @@ uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCN
 13. [构建与打包](#13-构建与打包)
 14. [开发规范](#14-开发规范)
 15. [调试与排错](#15-调试与排错)
+16. [拍照后压缩与原图保留](#16-拍照后压缩与原图保留)
 
 ---
 
@@ -341,22 +342,22 @@ ai.startDetect({
 
 ### 模型级（ModelConfig，顶层或 targetModel 内）
 
-| 字段 | 类型 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `modelType` | string | `detection` | `detection` / `classification` |
-| `engine` | string | `ncnn` | `ncnn` / `mock`（Mock 仅用于演示，生成随机框） |
-| `modelArch` | string | `yolov8` | 目标检测输出解码方式：`yolov8`（anchor-free，无 objectness）/ `yolov5`（anchor-based，含 objectness，置信度＝objectness×类别分数）。**模型是 YOLOv5 时必须显式设为 `yolov5`**，否则类别会整体错位、置信度也不对 |
-| `modelName` | string | `yolov8n` | 模型名（日志与结果标识） |
-| `modelPath` | string | `models/yolov8n_ncnn/yolov8n.param` | `.param` 文件，或仅给目录由插件自动查找 |
-| `binPath` | string | `models/yolov8n_ncnn/yolov8n.bin` | `.bin` 文件；留空则按 param 同名推断或目录查找 |
-| `labelPath` | string | `models/yolov8n_ncnn/labels.txt` | 标签文件（assets 相对路径） |
-| `threshold` | double | `0.5` | 置信度阈值（检测后处理过滤） |
-| `iouThreshold` | double | `0.45` | NMS IoU 阈值 |
-| `inputSize` | int | `640` | 检测模型方形输入边长 |
-| `inputWidth` / `inputHeight` | int | `640` | 分类模型输入宽高（ResNet 内置为 224） |
-| `topK` | int | `0` | 分类返回前 K 个结果 |
-| `positiveLabel` / `passLabel` | string | `""` | 外部分类模型的正/通过标签名 |
-| `useGpu` | boolean | `false` | 是否尝试 Vulkan（无 Vulkan 构建会回退 CPU） |
+| 字段                            | 类型      | 默认                                  | 说明                                                                                                                                                      |
+|-------------------------------|---------|-------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `modelType`                   | string  | `detection`                         | `detection` / `classification`                                                                                                                          |
+| `engine`                      | string  | `ncnn`                              | `ncnn` / `mock`（Mock 仅用于演示，生成随机框）                                                                                                                       |
+| `modelArch`                   | string  | `yolov8`                            | 目标检测输出解码方式：`yolov8`（anchor-free，无 objectness）/ `yolov5`（anchor-based，含 objectness，置信度＝objectness×类别分数）。**模型是 YOLOv5 时必须显式设为 `yolov5`**，否则类别会整体错位、置信度也不对 |
+| `modelName`                   | string  | `yolov8n`                           | 模型名（日志与结果标识）                                                                                                                                            |
+| `modelPath`                   | string  | `models/yolov8n_ncnn/yolov8n.param` | `.param` 文件，或仅给目录由插件自动查找                                                                                                                                |
+| `binPath`                     | string  | `models/yolov8n_ncnn/yolov8n.bin`   | `.bin` 文件；留空则按 param 同名推断或目录查找                                                                                                                          |
+| `labelPath`                   | string  | `models/yolov8n_ncnn/labels.txt`    | 标签文件（assets 相对路径）                                                                                                                                       |
+| `threshold`                   | double  | `0.5`                               | 置信度阈值（检测后处理过滤）                                                                                                                                          |
+| `iouThreshold`                | double  | `0.45`                              | NMS IoU 阈值                                                                                                                                              |
+| `inputSize`                   | int     | `640`                               | 检测模型方形输入边长                                                                                                                                              |
+| `inputWidth` / `inputHeight`  | int     | `640`                               | 分类模型输入宽高（ResNet 内置为 224）                                                                                                                                |
+| `topK`                        | int     | `0`                                 | 分类返回前 K 个结果                                                                                                                                             |
+| `positiveLabel` / `passLabel` | string  | `""`                                | 外部分类模型的正/通过标签名                                                                                                                                          |
+| `useGpu`                      | boolean | `false`                             | 是否尝试 Vulkan（无 Vulkan 构建会回退 CPU）                                                                                                                         |
 
 > 路径解析见 `AssetModelPathUtils`：支持「直接给 `.param`/`.bin`」「仅给目录自动查找扩展名」「按 param 推断同名 bin」三种方式，并在加载前校验 assets 是否存在。
 
@@ -712,4 +713,139 @@ adb logcat -s AiDetectPlugin
 ---
 
 > 维护提示：每次发布请同步更新 `releases/CHANGELOG.md` 与本文件的"适用版本"，并在改动 JNI / 模型输出格式时同步本文件第 8、11 节。
+## 16. 拍照后压缩与原图保留
+
+本节功能在 v1.5.0 正式归档，包含拍照压缩和可配置原图保留。历史 v1.4.4 发布归档不包含该修改。请使用 releases/AiDetectPlugin-v1.5.0/android/AiDetectPlugin-release.aar 重新制作并安装 HBuilderX 自定义基座。
+
+### 16.1 实现流程与文件
+
+CameraX 保存 JPEG → `handlePhotoSaved` → `PhotoCompressor.process` → 复检最终文件（纯拍照跳过）→ 缩略图/列表 → 单拍或多拍回调。
+
+- `PhotoCompressionConfig.java`：不可变配置，使用现有配置解析方法并限制参数范围。
+- `PhotoCompressor.java`：读取尺寸、采样解码、等比例缩小、EXIF 2～8 方向/镜像校正、JPEG 有限次编码、检查输出尺寸、临时文件重命名；默认保留拍照原文件；显式 keepOriginal=false 时，输出验证成功后尝试删除原图。
+- `DetectConfig.java`：解析 `photoCompression`；未传时保持关闭。
+- `DetectActivity.java`：保存回调现有 `analysisExecutor` 中执行压缩，压缩后复检；主线程追加多拍列表；页面已关闭时不追加结果。多拍删除、确认放弃、确认切回单拍会清理对应原图和副本。
+- `CapturedPhoto.java` / `JsonUtils.java`：保存并透传照片元信息；删除后重新编号仍保留元信息。
+- 不修改实时帧转换或模型输入配置，不增加生产依赖；EXIF 使用 Android 自带 `android.media.ExifInterface`。
+
+### 16.2 调用配置
+
+```js
+const options = {
+  detectMode: 'photo_only', // 同样支持 target_only / quality_only / full_pipeline
+  captureMode: 'single',  // 或 multi
+  photoCompression: {
+    enabled: true,
+    maxLongEdge: 2048,
+    quality: 85,
+    minQuality: 70,
+    targetSizeKB: 1024
+  }
+}
+ai.startDetect(options, callback)
 ```
+
+| 字段 | 默认值 | 约束与含义 |
+| --- | --- | --- |
+| enabled | false | 必须开启才对保存文件进行压缩；关闭时原图透传 |
+| keepOriginal | true | 压缩成功后是否保留原图；false 时在输出验证成功后尝试删除原图，失败/跳过/关闭时保留 |
+| maxLongEdge | 2048 | 像素，限制到 640～4096，等比例缩小，不放大小图 |
+| quality | 85 | JPEG 起始质量，限制到 1～100 |
+| minQuality | 70 | 限制到 1～quality；每次降低 5，最后一步落到最低质量 |
+| targetSizeKB | 1024 | 软目标，1KB=1024 字节，限制到 100～20480KB |
+
+普通无旋转照片同时满足尺寸和大小要求时跳过。EXIF 需要旋转/镜像时即使小图也重新编码。达到最低质量后停止，不为追求文件大小继续缩小图片。编码没有变小且原图尺寸与方向已符合要求时返回原图。输出 JPEG 不复制原图 EXIF（如 GPS、拍摄时间）；默认原图完整保留；keepOriginal=false 时成功输出后删除。复检针对最终文件，压缩造成的判定变化必须用真实业务样本验证，不能仅根据模型输入尺寸推断无损。
+
+### 16.3 返回字段
+
+单拍结果、多拍 `images[]` 和多拍顶层最后一张兼容字段均增加：
+
+| 字段 | 含义 |
+| --- | --- |
+| originalPath | 原图仍保留时为绝对路径；删除成功时为空字符串；跳过、关闭或失败时与最终路径一致 |
+| originalRetained | 原图是否实际存在；删除失败时仍为 true |
+| originalSize | 原始文件字节数 |
+| fileSize | 最终文件字节数 |
+| width / height | 最终文件像素宽高；压缩输出已校正方向，透传原图为编码尺寸 |
+| compressed | 是否生成了处理后的 JPEG 副本，旋转处理也算 true，不保证体积更小 |
+| compressionStatus | compressed / skipped / disabled / failed |
+| compressionTargetMet | 最终字节数是否不超过目标大小；不代表检测合格 |
+
+保留原有 `imagePath`、多拍 `path`、`qualified`、检测结果等字段。`compressionStatus=failed` 表示压缩失败后回退原图，不自动使检测失败；复检仍可失败。复检异常回调也带已有照片元信息。软目标不能替代上传接口硬限制校验，业务端应检查 `fileSize`。
+
+成功返回后由调用方按业务保存周期管理原图和副本；插件不因页面正常关闭而删除已交付文件。页面内显式删除/放弃/切回单拍清空时，两份文件一起清理。压缩中断时清理不完整 `.tmp` 文件；进程被强杀不保证执行清理。失败或关闭压缩时仍保留旧有原图解码/方向行为。
+
+### 16.4 自动化验证方法
+
+```powershell
+.\gradlew.bat :AiDetectPlugin:compileReleaseJavaWithJavac
+.\gradlew.bat :AiDetectPlugin:testReleaseUnitTest
+.\gradlew.bat :AiDetectPlugin:compileDebugAndroidTestJavaWithJavac
+```
+
+- `PhotoCompressionConfigTest`：默认关闭、默认参数、越界限制、质量下限、字符串数字与非法字符串回退。
+- `PhotoCompressionInstrumentation`：在 Android 上生成测试图片，验证关闭透传、小图跳过、等比例缩小、原图保留、元信息、EXIF 2～8 的尺寸及像素方向、软目标超限、无效图回退、临时文件清理。测试文件仅生成于专用测试缓存目录。
+- 设备测试为自定义 Instrumentation runner；连接设备后先执行 `:AiDetectPlugin:installDebugAndroidTest`，再执行 `adb shell am instrument -w com.example.aidetect.test/com.example.aidetect.PhotoCompressionInstrumentation`。输出应包含 `PASS:` 且结果码为 -1；失败时输出 `FAIL:` 和异常堆栈。
+
+### 16.5 本次真机验收清单（待执行）
+
+| 验证点 | 操作与预期 |
+| --- | --- |
+| 旧调用兼容 | 不传参数/关闭压缩，原图路径和字节保持不变，状态 disabled |
+| 多型号大图 | 至少三款不同手机各拍 2～6MB 及高像素照片；记录原/最终尺寸、大小、耗时，成功处理后长边不超过配置 |
+| 小图 | 满足尺寸、大小且方向正常时跳过，不反复编码、不放大 |
+| 软目标 | 用复杂纹理和较小目标触发超限，最低质量后正常结束，targetMet=false，业务按真实大小处理 |
+| 方向与细节 | 横持/竖持拍照，缩略图、上传图、检测方向一致；检查小字、小目标和细微缺陷 |
+| 四种检测模式 | 分别覆盖 photo_only、target_only、quality_only、full_pipeline；确认复检针对最终路径 |
+| 单拍与多拍 | 单拍正常返回；多拍连续拍至 10 张，完成后每项大小/路径/元信息正确，无重复项 |
+| 删除与重编号 | 删除中间一张，原图与副本均清理，剩余序号及元信息对应正确 |
+| 放弃与切换 | 多拍确认放弃或切回单拍，文件与列表清理；取消确认弹窗则保留 |
+| 原图保留 | 正常完成关闭页面后，originalPath 与最终路径均可读取；调用方完成业务后自行清理 |
+| 异常与生命周期 | 磁盘不足、压缩失败、处理中返回/停止，界面恢复或关闭，无重复回调/不完整结果入列表 |
+| 性能与识别 | 对照同批样本记录开启前后准确率、模糊/翻拍判定、峰值内存与拍照等待时间；未验证前不默认开启 |
+
+实际执行结果将在下方记录；无设备的项目编译不能替代上述真机验收。
+### 16.6 首轮验证记录（2026-09-11，历史记录）
+
+> 以下为首轮构建结果。当时的打包依赖问题已在 2026-09-15 解决，最新成功记录见第 16.7 节。
+
+- 最终主代码 `compileReleaseJavaWithJavac`：通过。
+- 配置单元测试：使用本机缓存的 JUnit 4.13.2 / Hamcrest / Fastjson 通过 JUnitCore 执行，`OK (3 tests)`。
+- Android 图片验证 runner：使用 Android 35 SDK 的 android.jar 直接 Java 编译通过；未连接设备，未执行图片运行验证。
+- Gradle 标准测试流程：依赖下载受 TLS 握手失败影响（hamcrest-core）；上述直接执行验证不等同于整个 Gradle 测试任务通过。
+- AAR 打包：`assembleRelease` 在 `extractReleaseAnnotations` 阶段因 intellij-core 构建依赖下载 TLS 握手失败而中断；未同步或发布新 AAR。双 ABI 原生构建任务已执行完成。
+- Android 测试 APK：Gradle 流程缺少 aapt2 缓存，未完成测试 APK 构建。
+- `git diff --check`：通过；已有 DEVELOPMENT 表格修改保留。
+
+依赖恢复后执行标准构建/测试；按项目发布流程选择新版本号后生成发布包，再做第 16.5 节真机验收。
+### 16.7 原图保留可配置（2026-09-15）
+
+增加 `photoCompression.keepOriginal`，默认 true，调试可保留对照；显式 false 时在压缩 JPEG 编码完成、尺寸和采样像素解码验证通过、输出文件落盘后尝试删除插件本次拍摄的原图。删除发生在复检之前，因此需要原图审计/复检回退的业务应保持 true。
+
+关闭压缩、小图跳过、压缩失败时不会删除唯一的原文件。原图删除失败时保留文件，并通过 `originalRetained=true` 与 `originalPath` 如实返回，不因此丢弃有效压缩图。正常返回后由业务端管理剩余文件。
+
+```js
+photoCompression: {
+  enabled: true,
+  keepOriginal: true, // 调试 true；只需压缩图时设为 false
+  maxLongEdge: 2048,
+  quality: 85,
+  minQuality: 70,
+  targetSizeKB: 1024
+}
+```
+
+新增验证：默认保留；显式 false 成功压缩后原图不存在且 originalPath 为空；失败/跳过时原文件存在；多拍删除与重编号继续正确。设备测试 runner 已包含对应断言。
+
+2026-09-15 构建结果：完整 assembleRelease（含资源验证）成功，AAR 已同步至 nativeplugins/AiDetectPlugin/android/AiDetectPlugin-release.aar。4 项配置单元测试通过；Android 图片测试源码编译通过，真机运行待测。已检查 classes.jar 中 keepOriginal/originalRetained 字段与双 ABI 库，构建和同步文件 SHA-256 一致：6ABFFDB412B2F78983A7DBF49A051777BF1057AE1313167CF8E4CFB1C9D93FDD。测试包保持 package.json 版本 1.4.4，未覆盖历史归档。
+
+本机 TLS 恢复方式：从官方 Android Maven 下载 intellij-core 与 aapt2，校验官方 SHA-1，通过 build/dependency-recovery/local-dependency.init.gradle 临时本地源运行完整构建。临时源未写入正式仓库配置。
+
+### 16.8 v1.5.0 正式归档（2026-10-16）
+
+- package.json 升级至 1.5.0，补齐压缩功能调用链、回调、生命周期清理、说明文档的提交。
+- 标准 Gradle testReleaseUnitTest：4 项测试通过，0 失败；compileDebugAndroidTestJavaWithJavac 通过。
+- build-release.ps1 完整执行成功（assembleRelease、双 ABI AAR 同步、版本目录和 ZIP 归档）。
+- 当前 AAR 与 releases/AiDetectPlugin-v1.5.0/android/AiDetectPlugin-release.aar 校验一致。
+- adb devices 无连接设备，图片运行测试和第 16.5 节真机验收未执行；不代表已完成设备兼容性验收。
+- 历史 1.4.4 归档保留不变；v1.5.0 为压缩功能基线，后续水印功能单独版本化。

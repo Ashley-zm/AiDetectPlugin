@@ -41,6 +41,7 @@ public final class DetectConfig {
     public final boolean pipelineMode;
     public final DetectMode detectMode;
     public final String captureMode;
+    public final PhotoCompressionConfig photoCompression;
     public final ModelConfig targetModelConfig;
     public final String modelType;
     public final String engine;
@@ -73,8 +74,10 @@ public final class DetectConfig {
             ModelConfig targetModelConfig,
             int detectInterval,
             int callbackInterval,
-            Set<String> drawLabels
+            Set<String> drawLabels,
+            PhotoCompressionConfig photoCompression
     ) {
+        this.photoCompression = photoCompression;
         this.detectMode = detectMode == null ? DetectMode.TARGET_ONLY : detectMode;
         this.captureMode = normalizeCaptureMode(captureMode);
         this.pipelineMode = this.detectMode.usesQualityPipeline();
@@ -124,7 +127,7 @@ public final class DetectConfig {
             }
         }
 
-        current = new DetectConfig(detectMode, captureMode, targetModelConfig, detectInterval, callbackInterval, drawLabels);
+        current = new DetectConfig(detectMode, captureMode, targetModelConfig, detectInterval, callbackInterval, drawLabels, PhotoCompressionConfig.fromJson(options.getJSONObject("photoCompression")));
     }
 
     public static synchronized DetectConfig snapshot() {
@@ -132,7 +135,7 @@ public final class DetectConfig {
     }
 
     public static DetectConfig fromModelConfig(ModelConfig modelConfig) {
-        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, modelConfig, DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null));
     }
 
     public void validateForStart() throws DetectException {
@@ -209,7 +212,7 @@ public final class DetectConfig {
     }
 
     private static DetectConfig defaults() {
-        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet());
+        return new DetectConfig(DetectMode.TARGET_ONLY, DEFAULT_CAPTURE_MODE, defaultTargetModel(), DEFAULT_DETECT_INTERVAL, DEFAULT_CALLBACK_INTERVAL, Collections.<String>emptySet(), PhotoCompressionConfig.fromJson(null));
     }
 
     private static String normalizeCaptureMode(String raw) {

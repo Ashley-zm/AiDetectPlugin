@@ -848,7 +848,15 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     /** 拍照文件保存成功后执行复检，并在主线程刷新缩略图、数量、提示文案和回调。 */
     private void handlePhotoSaved(@NonNull File photoFile, UniJSCallback callback) {
         String imagePath = photoFile.getAbsolutePath();
+        PhotoCompressor.Result processedPhoto = null;
         try {
+            PhotoCompressor.Result imageInfo = PhotoCompressor.process(photoFile, activeConfig().photoCompression);
+            processedPhoto = imageInfo;
+            imagePath = imageInfo.file.getAbsolutePath();
+            if (released) {
+                deleteProcessedPhoto(imageInfo);
+                return;
+            }
             JSONObject singleResult;
             CapturedPhoto capturedPhoto;
             DetectConfig config = activeConfig();
@@ -865,12 +873,15 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                 singleResult = JsonUtils.snapshotSuccess(imagePath, visionResult, System.currentTimeMillis(), config.detectModeValue());
                 capturedPhoto = capturedPhotoFromVision(imagePath, visionResult);
             }
-            isTakingPhoto.set(false);
-            restoreRealtimeAnalyzer();
+            imageInfo.putInto(singleResult);
+            final CapturedPhoto completedPhoto = capturedPhoto.withImageInfo(imageInfo);
             if (!multiCaptureMode) {
                 mainHandler.post(() -> {
+                    if (released) { deleteProcessedPhoto(imageInfo); return; }
+                    isTakingPhoto.set(false);
+                    restoreRealtimeAnalyzer();
                     updateCaptureControls();
-                    updateStatus(capturedPhoto.isPass() ? "拍照完成" : "本张不合格");
+                    updateStatus(completedPhoto.isPass() ? "拍照完成" : "本张不合格");
                     if (callback != null) {
                         notifySnapshotCallbackOnly(callback, singleResult);
                     } else {
@@ -879,12 +890,15 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                 });
                 return;
             }
-            capturedPhotos.add(capturedPhoto);
             mainHandler.post(() -> {
+                if (released) { deleteProcessedPhoto(imageInfo); return; }
+                capturedPhotos.add(completedPhoto);
+                isTakingPhoto.set(false);
+                restoreRealtimeAnalyzer();
                 // 多拍模式下每次点击只保存一张，并追加到底部列表。
                 updateCapturedPhotosUi();
                 updateCaptureControls();
-                updateStatus(capturedPhoto.isPass() ? "画面清晰，可继续拍照" : "本张不合格，可重新拍摄");
+                updateStatus(completedPhoto.isPass() ? "画面清晰，可继续拍照" : "本张不合格，可重新拍摄");
                 if (callback != null) {
                     notifySnapshotCallbackOnly(callback, singleResult);
                 }
@@ -893,7 +907,14 @@ public class DetectActivity extends Activity implements LifecycleOwner {
             Log.e(TAG, "Snapshot image infer failed", throwable);
             isTakingPhoto.set(false);
             restoreRealtimeAnalyzer();
-            notifySnapshotCallbackOnly(callback, JsonUtils.snapshotError(DetectErrorCode.SNAPSHOT_INFER_FAILED, "拍照成功，但对照片执行 YOLO 推理失败：" + messageOf(throwable), imagePath, true));
+            if (released) {
+                if (processedPhoto != null) deleteProcessedPhoto(processedPhoto);
+                return;
+            }
+            JSONObject error = JsonUtils.snapshotError(DetectErrorCode.SNAPSHOT_INFER_FAILED,
+                    "拍照成功，但照片处理或复检失败：" + messageOf(throwable), imagePath, true);
+            if (processedPhoto != null) processedPhoto.putInto(error);
+            notifySnapshotCallbackOnly(callback, error);
             mainHandler.post(() -> updateCaptureControls());
         }
     }
@@ -1097,13 +1118,23 @@ public class DetectActivity extends Activity implements LifecycleOwner {
         if (!removed) {
             return;
         }
-        deletePhotoFileQuietly(photo.path);
+        deleteCapturedPhotoFiles(photo);
         reindexCapturedPhotos();
         updateCapturedPhotosUi();
         updateCaptureControls();
         updateStatus(capturedPhotos.isEmpty()
                 ? "请继续拍照"
                 : String.format(Locale.CHINA, "已删除照片，剩余 %d 张", capturedPhotos.size()));
+    }
+
+    private void deleteProcessedPhoto(PhotoCompressor.Result info) {
+        deletePhotoFileQuietly(info.file.getAbsolutePath());
+        if (!info.original.equals(info.file)) deletePhotoFileQuietly(info.original.getAbsolutePath());
+    }
+
+    private void deleteCapturedPhotoFiles(CapturedPhoto photo) {
+        if (photo.imageInfo != null) deleteProcessedPhoto(photo.imageInfo);
+        else deletePhotoFileQuietly(photo.path);
     }
 
     private void deletePhotoFileQuietly(String path) {
@@ -1137,7 +1168,8 @@ public class DetectActivity extends Activity implements LifecycleOwner {
                     photo.remakeLabel,
                     photo.detectMode,
                     photo.timestamp,
-                    photo.time
+                    photo.time,
+                    photo.imageInfo
             ));
         }
     }
@@ -1233,7 +1265,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     private void clearCapturedPhotos(boolean deleteFiles) {
         if (deleteFiles) {
             for (CapturedPhoto photo : new ArrayList<>(capturedPhotos)) {
-                deletePhotoFileQuietly(photo.path);
+                deleteCapturedPhotoFiles(photo);
             }
         }
         capturedPhotos.clear();
@@ -1268,6 +1300,7 @@ public class DetectActivity extends Activity implements LifecycleOwner {
     }
 
     private void cancelAndFinish() {
+        clearCapturedPhotos(true);
         DetectCallbackManager.notifySnapshotResult(JsonUtils.cancelResult(), this::finishDetectAfterSnapshot);
     }
 

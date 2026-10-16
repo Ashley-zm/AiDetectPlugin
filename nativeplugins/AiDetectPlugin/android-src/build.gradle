@@ -8,6 +8,7 @@ android {
 
     defaultConfig {
         minSdk = 23
+        testInstrumentationRunner 'com.example.aidetect.PhotoCompressionInstrumentation'
         consumerProguardFiles 'consumer-rules.pro'
 
         ndk {
@@ -34,6 +35,9 @@ android {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.alibaba:fastjson:1.2.83'
+    androidTestImplementation 'com.alibaba:fastjson:1.2.83'
     compileOnly project(':dcloud-uniplugin-stubs')
     compileOnly 'com.alibaba:fastjson:1.2.83'
     implementation 'androidx.annotation:annotation:1.8.1'
