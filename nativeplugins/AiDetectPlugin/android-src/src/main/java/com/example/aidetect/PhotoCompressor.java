@@ -28,15 +28,16 @@ public final class PhotoCompressor {
         public final File inferenceFile;
         public final String watermarkStatus;
         public final PhotoCaptureTime captureTime;
+        public final String watermarkText;
 
         private Result(File file, File original, long originalSize, int width, int height,
                        String status, long targetBytes) {
-            this(file, original, originalSize, width, height, status, targetBytes, file, "disabled", null);
+            this(file, original, originalSize, width, height, status, targetBytes, file, "disabled", null, "");
         }
 
         private Result(File file, File original, long originalSize, int width, int height,
                        String status, long targetBytes, File inferenceFile, String watermarkStatus,
-                       PhotoCaptureTime captureTime) {
+                       PhotoCaptureTime captureTime, String watermarkText) {
             this.file = file;
             this.original = original;
             this.originalRetained = original.exists();
@@ -49,12 +50,19 @@ public final class PhotoCompressor {
             this.inferenceFile = inferenceFile;
             this.watermarkStatus = watermarkStatus;
             this.captureTime = captureTime;
+            this.watermarkText = "applied".equals(watermarkStatus) ? watermarkText : "";
         }
 
         Result withWatermark(File output, int width, int height, long targetBytes,
                              String watermarkStatus, PhotoCaptureTime captureTime) {
+            return withWatermark(output, width, height, targetBytes, watermarkStatus, captureTime,
+                    captureTime == null ? "" : captureTime.time);
+        }
+
+        Result withWatermark(File output, int width, int height, long targetBytes,
+                             String watermarkStatus, PhotoCaptureTime captureTime, String watermarkText) {
             return new Result(output, original, originalSize, width, height, status, targetBytes,
-                    file, watermarkStatus, captureTime);
+                    file, watermarkStatus, captureTime, watermarkText);
         }
 
         public void putInto(JSONObject json) {
@@ -69,7 +77,7 @@ public final class PhotoCompressor {
             json.put("originalRetained", originalRetained);
             json.put("watermarkStatus", watermarkStatus);
             json.put("watermarked", "applied".equals(watermarkStatus));
-            json.put("watermarkText", "applied".equals(watermarkStatus) && captureTime != null ? captureTime.time : "");
+            json.put("watermarkText", watermarkText);
             json.put("intermediatePath", !inferenceFile.equals(file) && !inferenceFile.equals(original)
                     && inferenceFile.exists() ? inferenceFile.getAbsolutePath() : "");
             if (captureTime != null) {

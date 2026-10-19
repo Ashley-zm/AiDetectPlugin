@@ -48,6 +48,38 @@ final class PhotoWatermarkChecks {
         JSONObject child = multi.getJSONArray("images").getJSONObject(0);
         check(item.path.equals(child.getString("path")) && "applied".equals(child.getString("watermarkStatus")), "multi item metadata");
 
+        for (int[] size : new int[][]{{320, 200}, {600, 800}, {800, 600}}) {
+            JSONObject custom = new JSONObject();
+            custom.put("enabled", true);
+            custom.put("address", "上海市浦东新区某园区");
+            custom.put("person", "张三");
+            PhotoWatermarkConfig customConfig = PhotoWatermarkConfig.fromJson(custom);
+            custom.put("person", "后续修改不应生效");
+            PhotoCompressor.Result customResult = PhotoWatermarker.process(
+                    PhotoCompressor.process(photo(directory, size[0], size[1]), off), customConfig, off, capture);
+            check("applied".equals(customResult.watermarkStatus), "custom watermark applied");
+            check(customResult.watermarkText.equals("地址：上海市浦东新区某园区\n人员：张三\n" + capture.time), "actual multiline text");
+            JSONObject customJson = new JSONObject();
+            customResult.putInto(customJson);
+            check(customResult.watermarkText.equals(customJson.getString("watermarkText")), "single metadata multiline");
+            CapturedPhoto customItem = item.withImageInfo(customResult);
+            JSONObject customMulti = JsonUtils.multiSnapshotResult(Arrays.asList(customItem));
+            check(customResult.watermarkText.equals(customMulti.getString("watermarkText"))
+                    && customResult.watermarkText.equals(customMulti.getJSONArray("images").getJSONObject(0).getString("watermarkText")), "multi metadata multiline");
+            Bitmap customImage = BitmapFactory.decodeFile(customResult.file.getAbsolutePath());
+            check(customImage != null && customImage.getWidth() == size[0] && customImage.getHeight() == size[1], "custom image dimensions");
+            int upperWhite = 0;
+            // Optional text sits above the previous timestamp-only band on a nonwhite fixture.
+            for (int y = (int)(size[1] * 0.78F); y < (int)(size[1] * 0.90F); y++) {
+                for (int x = size[0] / 3; x < size[0]; x++) {
+                    int pixel = customImage.getPixel(x, y);
+                    if (Color.red(pixel) > 200 && Color.green(pixel) > 200 && Color.blue(pixel) > 200) upperWhite++;
+                }
+            }
+            customImage.recycle();
+            check(upperWhite > 0, "custom text pixels above time");
+        }
+
         options.put("maxLongEdge", 640);
         for (boolean keep : new boolean[]{true, false}) {
             options.put("keepOriginal", keep);

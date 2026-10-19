@@ -12,6 +12,7 @@ import android.util.Log;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.List;
 
 /** Runs only after snapshot inference. Never overwrites the inference/source image. */
 public final class PhotoWatermarker {
@@ -56,7 +57,7 @@ public final class PhotoWatermarker {
         try {
             if (Thread.currentThread().isInterrupted()) throw new IOException("Watermark interrupted");
             bitmap = decodeOriented(source.file.getAbsolutePath(), true);
-            drawTimestamp(bitmap, captureTime.time);
+            String watermarkText = drawWatermark(bitmap, captureTime.time, config);
             pending = File.createTempFile("detect_watermarked_", ".tmp", source.file.getParentFile());
             int quality = compression.enabled ? compression.quality : 95;
             while (true) {
@@ -88,7 +89,7 @@ public final class PhotoWatermarker {
             if (!pending.renameTo(output)) throw new IOException("Cannot finalize watermark output");
             try {
                 result = source.withWatermark(output, verified.outWidth, verified.outHeight,
-                        compression.targetBytes, "applied", captureTime);
+                        compression.targetBytes, "applied", captureTime, watermarkText);
             } catch (RuntimeException | OutOfMemoryError error) {
                 if (!output.delete()) Log.w(TAG, "Could not remove uncommitted watermark output: " + output);
                 throw error;
@@ -111,7 +112,7 @@ public final class PhotoWatermarker {
         }
     }
 
-    private static void drawTimestamp(Bitmap bitmap, String text) {
+    private static String drawWatermark(Bitmap bitmap, String text, PhotoWatermarkConfig config) {
         float shortEdge = Math.min(bitmap.getWidth(), bitmap.getHeight());
         float margin = shortEdge * 0.025F;
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -119,13 +120,34 @@ public final class PhotoWatermarker {
         paint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
         paint.setTextSize(shortEdge * 0.035F);
         float availableWidth = bitmap.getWidth() - margin * 2;
+        boolean custom = !config.address.isEmpty() || !config.person.isEmpty();
+        if (custom) availableWidth = Math.min(availableWidth, bitmap.getWidth() * 0.7F);
         if (paint.measureText(text) > availableWidth) {
             paint.setTextSize(paint.getTextSize() * availableWidth / paint.measureText(text));
         }
-        paint.setTextAlign(Paint.Align.RIGHT);
         paint.setShadowLayer(Math.max(1F, shortEdge * 0.002F), 0, shortEdge * 0.001F, Color.BLACK);
         Paint.FontMetrics metrics = paint.getFontMetrics();
-        new Canvas(bitmap).drawText(text, bitmap.getWidth() - margin,
-                bitmap.getHeight() - margin - metrics.bottom, paint);
+        Canvas canvas = new Canvas(bitmap);
+        if (!custom) {
+            // Preserve the previous timestamp-only rendering exactly.
+            paint.setTextAlign(Paint.Align.RIGHT);
+            canvas.drawText(text, bitmap.getWidth() - margin,
+                    bitmap.getHeight() - margin - metrics.bottom, paint);
+            return text;
+        }
+        List<String> lines = PhotoWatermarkText.lines(config, text, availableWidth, paint::measureText);
+        float blockWidth = 0;
+        for (String line : lines) blockWidth = Math.max(blockWidth, paint.measureText(line));
+        float lineHeight = (metrics.bottom - metrics.top) * 1.2F;
+        float y = bitmap.getHeight() - margin - metrics.bottom - (lines.size() - 1) * lineHeight;
+        paint.setTextAlign(Paint.Align.LEFT);
+        StringBuilder drawn = new StringBuilder();
+        for (String line : lines) {
+            canvas.drawText(line, bitmap.getWidth() - margin - blockWidth, y, paint);
+            if (drawn.length() > 0) drawn.append('\n');
+            drawn.append(line);
+            y += lineHeight;
+        }
+        return drawn.toString();
     }
 }

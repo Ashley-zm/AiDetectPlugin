@@ -2,7 +2,7 @@
 
 uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCNN** 的实时图像质量检测与目标检测能力。
 
-> 适用版本：`v1.6.0`；第 16 节为压缩功能，第 17 节为时间水印。
+> 适用版本：`v1.7.0`；第 16 节为压缩功能，第 17 节为时间水印。
 > 运行时插件 id 始终为 `AiDetectPlugin`（`uni.requireNativePlugin('AiDetectPlugin')`），版本号仅用于发布归档命名。
 
 ---
@@ -864,7 +864,9 @@ v1.6.0 新增可选时间水印，默认关闭，无新增生产依赖。适用�
 
 ```js
 photoWatermark: {
-  enabled: true // 默认 false；只支持此开关，不接收任意自定义文本
+  enabled: true, // 默认 false
+  address: '上海市浦东新区某园区', // 可选
+  person: '张三' // 可选
 }
 ```
 
@@ -885,7 +887,7 @@ photoWatermark: {
 | imagePath / images[].path | 水印成功时为水印成品；关闭或失败时为压缩后的图片或原图 |
 | watermarkStatus | applied / disabled / failed；复检抛异常导致水印未执行时，snapshot_error 中为 not_processed |
 | watermarked | 是否成功写入水印；与 qualified 无关 |
-| watermarkText | 成功时实际绘制的时间文字；否则为空字符串 |
+| watermarkText | 成功时实际绘制的完整文字，包含地址/人员/时间、换行及省略号；否则为空字符串。仅时间调用保持原值 |
 | captureTimestamp | 发起拍照时记录的 Unix 毫秒时间 |
 | captureTime | 拍照时区下的 yyyy-MM-dd HH:mm:ss 文本，即计划绘制的文字 |
 | captureTimeZone | 拍照时设备时区 ID，例如 Asia/Shanghai |
@@ -929,3 +931,24 @@ adb shell am instrument -w com.example.aidetect.test/com.example.aidetect.PhotoC
 - assembleRelease 通过，产物包含 arm64-v8a / armeabi-v7a 原生库及 PhotoWatermarker / PhotoWatermarkConfig / PhotoCaptureTime 类。
 - 已同步插件目录 AAR、归档 v1.6.0 AAR 与 ZIP；最终源码修正后重新构建并同步，三处 AAR SHA-256 一致：5A27EB4A2075AFD75D4006712302A51B23CAEC2CD40F4A9ACB74B0DF13BDAEA5。
 - 压缩基线 v1.5.0 已提交并推送（fd29b1a）；水印版本与其分开记录，历史包未覆盖。
+### 17.7 v1.7.0 可选地址与人员（2026-10-19）
+
+新增 photoWatermark.address 与 photoWatermark.person，均为可选字符串，默认空。未传、null、非字符串、空字符串或纯空白均视为不填写；不显示空标签。enabled=false 时即使传入信息也不绘制水印。
+
+- 将换行、制表符、Unicode 空格及连续空白归一化为单个空格，去除首尾空白。
+- 地址限制 100 个 Unicode 码点，人员限制 30 个；超出时保留前 99 / 29 个码点并加省略号，避免切断 UTF-16 代理对。
+- 地址/人员保存在不可变配置中，启动相机后同次多拍共用；每张拍照时间继续独立冻结。
+- 有自定义信息时：右下角放置整块水印，内部左对齐，顺序为地址、人员、时间。保持短边 3.5% 字号、2.5% 边距、白色粗体与黑色阴影；最大宽度为图片宽度的 70%，时间过宽时缩小字号。
+- 按实际字体测量宽度，地址最多换为 3 行，人员最多 1 行，最后一行超宽时以省略号结尾；时间完整保留，总计最多 5 行。
+- 无自定义信息时走原时间绘制分支，位置、字号、对齐与旧调用保持一致。
+- watermarkText 精确记录绘制文字及换行、省略号，经单拍、多拍 items 和顶层兼容字段统一返回；captureTime 仍只包含时间。
+- PhotoWatermarkText 负责可测的换行/省略规则，PhotoWatermarker 用同一字体测量并绘制，不改变压缩、复检顺序或文件保留策略。
+- 无定位/人员查询请求，不增加权限或生产依赖。
+
+验收重点：仅地址、仅人员、都填、都不填；中文长地址、超长姓名、换行/空格和非法类型；小图、横图、竖图上的排版与可读性；多拍各图的时间和相同地址/人员；单/多拍 watermarkText 与照片文字对应；水印关闭/失败时不返回虚假文字。
+### 17.8 v1.7.0 验证记录（2026-10-19）
+
+- testReleaseUnitTest：14 项通过（压缩 4、水印配置/时间 6、文本布局 4），0 失败。
+- compileDebugAndroidTestJavaWithJavac 通过；新增横图、竖图、小图多行文字像素与单/多拍回调检查。adb devices 无连接设备，设备图片测试和相机交互未执行。
+- build-release.ps1 成功完成 assembleRelease、AAR 同步、v1.7.0 目录及 ZIP 归档。
+- 构建产物、插件目录、发布目录及 ZIP 内 AAR 的 SHA-256 一致：4E6C777E30D22EE3A07E8EC86D5EA0EBC9287C11EDC7F357D36DD4BBF7CF308C；ZIP 内版本号确认为 1.7.0。

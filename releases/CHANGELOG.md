@@ -10,6 +10,15 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.7.0 - 2026-10-19
+
+- 水印新增可选 address（地址）和 person（人员）配置；空值/非法类型不显示，不填时保持原时间水印。
+- 归一化空白，地址/人员分别限制 100 / 30 个 Unicode 码点；地址最多 3 行、人员最多 1 行，超出用省略号显示。
+- 自定义文字块位于右下角，内部左对齐，最多占图片宽度 70%；保留白字、黑色阴影和按尺寸适配的字号。
+- watermarkText 返回实际绘制的多行文字，单拍、多拍一致；地址/人员按相机会话固定，时间逐张冻结。
+- 补充配置、布局单元测试及 Android 图片验证；同步 README 与 DEVELOPMENT 第 17.7 节。
+- 发布归档：releases/AiDetectPlugin-v1.7.0/ 与 ZIP；历史归档不覆盖。真机效果与交互仍需设备验收。
+
 ## v1.6.0 - 2026-10-16
 
 - 新增 photoWatermark.enabled（默认 false），单拍/多拍、四种检测模式支持图片右下角永久时间水印。

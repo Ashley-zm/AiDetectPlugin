@@ -3,7 +3,7 @@
 uni-app（DCloud HBuilderX）Android 原生插件，基于 **CameraX + NCNN** 提供原生拍照、实时图像质量检测与目标检测能力。
 
 - 运行时插件 id：`AiDetectPlugin` —— `uni.requireNativePlugin('AiDetectPlugin')`
-- 当前版本：`v1.6.0`
+- 当前版本：`v1.7.0`
 - 能力：纯拍照、YOLOv8 / YOLOv5 目标检测、ResNet18 质量判定（模糊 / 翻拍）、三段 Pipeline、实时帧检测、拍照保存后复检、默认单拍与多拍切换、多张连续拍照后统一返回、闪光灯控制
 
 ## 快速开始
@@ -119,14 +119,18 @@ ai.startDetect({
 
 完整参数、原图清理约定及本次验证清单见 [DEVELOPMENT.md](DEVELOPMENT.md) 第 16 节。
 
-## 拍照时间水印（v1.6.0）
+## 拍照水印（v1.7.0：可选地址、人员）
 
 `photoWatermark.enabled` 默认 false，独立于压缩开关。开启后在图片右下角写入 `yyyy-MM-dd HH:mm:ss`，白色粗体带黑色阴影，字号和边距随图片尺寸适配；上传和分享返回的图片即可保留水印。
 
 ```js
 ai.startDetect({
   detectMode: 'photo_only', // 四种检测模式、单拍/多拍均支持
-  photoWatermark: { enabled: true },
+  photoWatermark: {
+    enabled: true,
+    address: '上海市浦东新区某园区', // 可选，不填不显示
+    person: '张三'                   // 可选，不填不显示
+  },
   photoCompression: { enabled: true, keepOriginal: true, maxLongEdge: 2048 }
 }, (res) => {
   if (res.type !== 'snapshot') return
@@ -142,3 +146,7 @@ ai.startDetect({
 先压缩、再复检无水印图、最后生成水印成品；纯拍照跳过复检。`imagePath` / `images[].path` 指向成品，检测结果描述加水印前的图像。拍摄时间与时区在发起每次拍照时固定，通过 `captureTimestamp`、`captureTime`、`captureTimeZone` 返回；旧 `timestamp` 字段含义不变。设备时间由系统提供，不是服务器校时或防篡改凭据。
 
 关闭压缩或小图跳过压缩仍会加水印。水印失败回退可用图片，返回 `watermarkStatus=failed`，不改变检测合格与否。输出需要 JPEG 重编码，压缩开启时继续尝试软体积目标，`fileSize` 和 `compressionTargetMet` 按水印成品重新计算。更多字段、文件保留规则及真机验收见 [DEVELOPMENT.md](DEVELOPMENT.md) 第 17 节。
+
+地址和人员都非必填：不传、null、空字符串、纯空白或非字符串均不显示对应行；只传 enabled 时保持原时间水印效果。文字去除首尾空白并合并换行/连续空白。地址最多 100 个 Unicode 码点、最多 3 行；人员最多 30 个码点、最多 1 行，超出长度或显示宽度用省略号结尾。自定义水印整体位于右下角，内部左对齐，依次显示地址、人员、时间，最大宽度为图片宽度的 70%。
+
+地址、人员在启动相机时固定，本次多拍共用；时间逐张记录。成功时 watermarkText 为实际绘制的多行文字（含换行与省略号），关闭或失败时为空。地址由调用方提供，不自动定位；人员也不会自动读取用户信息。
