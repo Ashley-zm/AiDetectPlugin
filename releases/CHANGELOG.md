@@ -10,6 +10,13 @@ uni.requireNativePlugin('AiDetectPlugin')
 
 Versioned names such as `AiDetectPlugin-v1.2.4` are release archive names only.
 
+## v1.7.1 - 2026-10-22
+
+- 水印各行（地址、人员、时间）统一右对齐，右边距保持一致。
+- 文字调整为 80% 不透明度，保留黑色阴影；兼容仅时间水印及自定义水印。
+- 参数、文本换行与省略、回调内容不变；同步文档及设备像素检查。
+- 发布归档：releases/AiDetectPlugin-v1.7.1/ 及 ZIP；真机视觉效果待验收。
+
 ## v1.7.0 - 2026-10-19
 
 - 水印新增可选 address（地址）和 person（人员）配置；空值/非法类型不显示，不填时保持原时间水印。

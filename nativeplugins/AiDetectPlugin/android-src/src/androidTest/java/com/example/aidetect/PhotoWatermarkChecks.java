@@ -33,7 +33,7 @@ final class PhotoWatermarkChecks {
         int white = 0;
         for (int y = 540; y < 590; y++) for (int x = 300; x < 790; x++) {
             int pixel = image.getPixel(x, y);
-            if (Color.red(pixel) > 210 && Color.green(pixel) > 210 && Color.blue(pixel) > 210) white++;
+            if (Color.red(pixel) > 170 && Color.green(pixel) > 170 && Color.blue(pixel) > 170) white++;
         }
         image.recycle();
         check(white > 30, "timestamp pixels in lower right");
@@ -73,7 +73,7 @@ final class PhotoWatermarkChecks {
             for (int y = (int)(size[1] * 0.78F); y < (int)(size[1] * 0.90F); y++) {
                 for (int x = size[0] / 3; x < size[0]; x++) {
                     int pixel = customImage.getPixel(x, y);
-                    if (Color.red(pixel) > 200 && Color.green(pixel) > 200 && Color.blue(pixel) > 200) upperWhite++;
+                    if (Color.red(pixel) > 170 && Color.green(pixel) > 170 && Color.blue(pixel) > 170) upperWhite++;
                 }
             }
             customImage.recycle();

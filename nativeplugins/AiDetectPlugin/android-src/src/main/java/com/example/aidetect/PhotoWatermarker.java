@@ -117,6 +117,7 @@ public final class PhotoWatermarker {
         float margin = shortEdge * 0.025F;
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(Color.WHITE);
+        paint.setAlpha(204); // 80% opacity, shared by timestamp and optional fields.
         paint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
         paint.setTextSize(shortEdge * 0.035F);
         float availableWidth = bitmap.getWidth() - margin * 2;
@@ -129,21 +130,19 @@ public final class PhotoWatermarker {
         Paint.FontMetrics metrics = paint.getFontMetrics();
         Canvas canvas = new Canvas(bitmap);
         if (!custom) {
-            // Preserve the previous timestamp-only rendering exactly.
+            // Keep the timestamp-only position and sizing.
             paint.setTextAlign(Paint.Align.RIGHT);
             canvas.drawText(text, bitmap.getWidth() - margin,
                     bitmap.getHeight() - margin - metrics.bottom, paint);
             return text;
         }
         List<String> lines = PhotoWatermarkText.lines(config, text, availableWidth, paint::measureText);
-        float blockWidth = 0;
-        for (String line : lines) blockWidth = Math.max(blockWidth, paint.measureText(line));
         float lineHeight = (metrics.bottom - metrics.top) * 1.2F;
         float y = bitmap.getHeight() - margin - metrics.bottom - (lines.size() - 1) * lineHeight;
-        paint.setTextAlign(Paint.Align.LEFT);
+        paint.setTextAlign(Paint.Align.RIGHT);
         StringBuilder drawn = new StringBuilder();
         for (String line : lines) {
-            canvas.drawText(line, bitmap.getWidth() - margin - blockWidth, y, paint);
+            canvas.drawText(line, bitmap.getWidth() - margin, y, paint);
             if (drawn.length() > 0) drawn.append('\n');
             drawn.append(line);
             y += lineHeight;

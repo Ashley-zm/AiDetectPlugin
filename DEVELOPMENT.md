@@ -2,7 +2,7 @@
 
 uni-app（DCloud HBuilderX）Android 原生插件，提供基于 **CameraX + NCNN** 的实时图像质量检测与目标检测能力。
 
-> 适用版本：`v1.7.0`；第 16 节为压缩功能，第 17 节为时间水印。
+> 适用版本：`v1.7.1`；第 16 节为压缩功能，第 17 节为时间水印。
 > 运行时插件 id 始终为 `AiDetectPlugin`（`uni.requireNativePlugin('AiDetectPlugin')`），版本号仅用于发布归档命名。
 
 ---
@@ -871,7 +871,7 @@ photoWatermark: {
 ```
 
 - 格式固定 yyyy-MM-dd HH:mm:ss（例如 2026-10-16 11:30:45）。
-- 右下角白色粗体，黑色阴影；字号为短边的 3.5%，边距为短边的 2.5%，宽度不足时自动缩小文字。
+- 右下角白色粗体，80% 不透明度（alpha=204/255），每行右对齐，保留黑色阴影；字号为短边的 3.5%，边距为短边的 2.5%，宽度不足时自动缩小文字。
 - 时间取发起 takePicture 时的系统时间，不是曝光硬件时间、落盘时间或复检结束时间。系统时间不准时水印也会不准。
 - 每张照片独立冻结时区与文本，后续处理或系统时区变化不改变已记录时间；不提供可信时间认证。
 - 无论压缩是否开启、是否跳过小图，水印开关均独立生效。
@@ -952,3 +952,10 @@ adb shell am instrument -w com.example.aidetect.test/com.example.aidetect.PhotoC
 - compileDebugAndroidTestJavaWithJavac 通过；新增横图、竖图、小图多行文字像素与单/多拍回调检查。adb devices 无连接设备，设备图片测试和相机交互未执行。
 - build-release.ps1 成功完成 assembleRelease、AAR 同步、v1.7.0 目录及 ZIP 归档。
 - 构建产物、插件目录、发布目录及 ZIP 内 AAR 的 SHA-256 一致：4E6C777E30D22EE3A07E8EC86D5EA0EBC9287C11EDC7F357D36DD4BBF7CF308C；ZIP 内版本号确认为 1.7.0。
+### 17.9 v1.7.1 水印样式调整（2026-10-22）
+
+- 地址（含折行）、人员、时间统一按同一个右侧边距右对齐；替代 v1.7.0 的块内左对齐。
+- 白色文字使用 80% 不透明度（约 20% 透明，alpha=204/255），仅时间和带自定义信息的水印均生效；保留黑色阴影便于辨认。
+- 字号、边距、最多行数、文本省略、参数与回调语义不变；历史版本的样式描述仅适用于对应版本。
+- 设备像素检查降低亮度阈值以兼容半透明文字与背景混合，仍检查时间及自定义文字所在区域存在可见像素。
+验证记录：14 项单元测试通过，Android 图片测试代码编译通过，assembleRelease 与 v1.7.1 打包成功。构建、插件目录及归档 AAR SHA-256 均为 F66D0F2DB6387B5B161BCCEADA70BA55A31BD8B3CC87BF0481C082A9C2440700。检测到 Android 14 设备，但测试包安装返回 INSTALL_FAILED_USER_RESTRICTED（Install canceled by user），因此设备图片测试未运行，右对齐和半透明的实际视觉效果仍待真机验收。
